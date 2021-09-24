@@ -1,0 +1,55 @@
+.. IMPACTS documentation master file, created by
+   sphinx-quickstart on Wed Jun  2 18:18:46 2021.
+   You can adapt this file completely to your liking, but it should at least
+   contain the root `toctree` directive.
+
+The Investigation of Microphysics and Precipitation for Atlantic Coast-Threatening Snowstorms (IMPACTS)
+=======================================================================================================
+
+.. toctree::
+   :maxdepth: 2
+   :hidden:
+   :caption: documentation
+
+   impacts_tools
+   installation
+   contributing
+
+
+.. toctree::
+   :maxdepth: 1
+   :hidden:
+   :caption: Example Notebooks
+
+   notebooks
+
+.. toctree::
+   :maxdepth: 1
+   :hidden:
+   :caption: Getting Help
+
+The Investigation of Microphysics and Precipitation for Atlantic Coast-Threatening Snowstorms (IMPACTS) 
+is a NASA Earth Venture Suborbital-3 (EVS-3) aircraft-based field campaign to study precipitation banding
+in severe winter cyclones in the Northeast United States.
+
+
+What is IMPACTS-TOOLS?
+======================
+This package contains a collection of tools to make it easy to work with data collected during the 
+Investigation of Microphysics and Precipitation for Atlantic Coast-Threatening Snowstorms (IMPACTS)
+Field Campaign. 
+
+IMPACTS data consists of various radars, microphysics probes, and other instruments flown on two planes
+during snowstorms. IMPACTS-TOOLS simplies and speeds up development and analysis of the datasets by 
+exposing a common interface for reading, processing, and plotting data from multiple instruments. 
+
+IMPACTS-TOOLS also contains more specialized functions for advanced analysis as papers are published by 
+the IMPACTS Science Team. 
+
+
+Links and Data Access
+=====================
+
+* :ref:`genindex`
+* :ref:`modindex`
+* :ref:`search`

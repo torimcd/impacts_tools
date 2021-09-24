@@ -1,0 +1,733 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+  <meta charset="utf-8" />
+  
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  
+  <title>API Reference &mdash; IMPACTS-TOOLS  documentation</title>
+  
+
+  
+  <link rel="stylesheet" href="_static/css/theme.css" type="text/css" />
+  <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+  <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+  <link rel="stylesheet" href="_static/css/theme.css" type="text/css" />
+  <link rel="stylesheet" href="_static/css/custom.css" type="text/css" />
+
+  
+  
+
+  
+  
+
+  
+
+  
+  <!--[if lt IE 9]>
+    <script src="_static/js/html5shiv.min.js"></script>
+  <![endif]-->
+  
+    
+      <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
+        <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js"></script>
+        <script src="_static/jquery.js"></script>
+        <script src="_static/underscore.js"></script>
+        <script src="_static/doctools.js"></script>
+    
+    <script type="text/javascript" src="_static/js/theme.js"></script>
+
+    
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Installation" href="installation.html" />
+    <link rel="prev" title="The Investigation of Microphysics and Precipitation for Atlantic Coast-Threatening Snowstorms (IMPACTS)" href="index.html" /> 
+</head>
+
+<body class="wy-body-for-nav">
+
+   
+  <div class="wy-grid-for-nav">
+    
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+          
+
+          
+            <a href="index.html" class="icon icon-home"> IMPACTS-TOOLS
+          
+
+          
+            
+            <img src="_static/IMPACTSlogo.png" class="logo" alt="Logo"/>
+          
+          </a>
+
+          
+
+          
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+
+          
+        </div>
+
+        
+        <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="main navigation">
+          
+            
+            
+              
+            
+            
+              <p class="caption" role="heading"><span class="caption-text">documentation</span></p>
+<ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">API Reference</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#submodules">Submodules</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#module-impacts_tools.er2">impacts_tools.er2 module</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#module-impacts_tools.p3">impacts_tools.p3 module</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#module-impacts_tools">Module contents</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="contributing.html">Contributing</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Links</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference external" href="https://github.com/torimcd/impacts_tools">GitHub Repository</a></li>
+<li class="toctree-l1"><a class="reference external" href="https://ghrc.nsstc.nasa.gov/home/micro-articles/investigation-microphysics-and-precipitation-atlantic-coast-threatening-snowstorms">IMPACTS Data Archive</a></li>
+<li class="toctree-l1"><a class="reference external" href="http://catalog.eol.ucar.edu/impacts_2020">IMPACTS Field Catalog</a></li>
+<li class="toctree-l1"><a class="reference external" href="https://espo.nasa.gov/impacts/content/IMPACTS">NASA ESPO IMPACTS Home Page</a></li>
+</ul>
+
+            
+          
+        </div>
+        
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+
+      
+      <nav class="wy-nav-top" aria-label="top navigation">
+        
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="index.html">IMPACTS-TOOLS</a>
+        
+      </nav>
+
+
+      <div class="wy-nav-content">
+        
+        <div class="rst-content">
+        
+          
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div role="navigation" aria-label="breadcrumbs navigation">
+
+  <ul class="wy-breadcrumbs">
+    
+      <li><a href="index.html" class="icon icon-home"></a> &raquo;</li>
+        
+      <li>API Reference</li>
+    
+    
+      <li class="wy-breadcrumbs-aside">
+        
+          
+            <a href="_sources/impacts_tools.rst.txt" rel="nofollow"> View page source</a>
+          
+        
+      </li>
+    
+  </ul>
+
+  
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+            
+  <div class="section" id="impacts-tools-package">
+<h1>API Reference<a class="headerlink" href="#impacts-tools-package" title="Permalink to this headline">¶</a></h1>
+<div class="section" id="submodules">
+<h2>Submodules<a class="headerlink" href="#submodules" title="Permalink to this headline">¶</a></h2>
+</div>
+<div class="section" id="module-impacts_tools.er2">
+<span id="impacts-tools-er2-module"></span><h2>impacts_tools.er2 module<a class="headerlink" href="#module-impacts_tools.er2" title="Permalink to this headline">¶</a></h2>
+<p>Classes for IMPACTS ER2 Instruments</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="impacts_tools.er2.Crs">
+<em class="property"><span class="pre">class</span> </em><span class="sig-prename descclassname"><span class="pre">impacts_tools.er2.</span></span><span class="sig-name descname"><span class="pre">Crs</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">filepath</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">start_time</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">end_time</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">atten_file</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_roll</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dbz_sigma</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">vel_sigma</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">width_sigma</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ldr_sigma</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dbz_min</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">vel_min</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">width_min</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#impacts_tools.er2.Crs" title="Permalink to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#impacts_tools.er2.Radar" title="impacts_tools.er2.Radar"><code class="xref py py-class docutils literal notranslate"><span class="pre">impacts_tools.er2.Radar</span></code></a></p>
+<p>A class to represent the CRS nadir pointing radar flown on the ER2 during the IMPACTS field campaign.
+Inherits from Radar()</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>filepath</strong> (<em>str</em>) – File path to the CRS data file</p></li>
+<li><p><strong>start_time</strong> (<em>np.datetime64</em><em> or </em><em>None</em>) – The initial time of interest eg. if looking at a single flight leg</p></li>
+<li><p><strong>end_time</strong> (<em>np.datetime64</em><em> or </em><em>None</em>) – The final time of interest eg. if looking at a single flight leg</p></li>
+<li><p><strong>atten_file</strong> (<em>str</em><em> or </em><em>None</em>) – Path to file containing gridded attenuation due to atmospheric gases</p></li>
+<li><p><strong>max_roll</strong> (<em>float</em><em> or </em><em>None</em>) – The maximum roll angle of the aircraft in degrees, used to mask times with the aircraft is turning and the radars are off-nadir</p></li>
+<li><p><strong>dbz_sigma</strong> (<em>float</em><em> or </em><em>None</em>) – The standard deviation to use in despeckling the radar reflectivity. Data above threshold is masked using a Gaussian filter</p></li>
+<li><p><strong>vel_sigma</strong> (<em>float</em><em> or </em><em>None</em>) – The standard deviation to use in despeckling the radar Doppler velocity. Data above threshold is masked using a Gaussian filter</p></li>
+<li><p><strong>width_sigma</strong> (<em>float</em><em> or </em><em>None</em>) – The standard deviation to use in despeckling the radar spectrum width. Data above threshold is masked using a Gaussian filter</p></li>
+<li><p><strong>ldr_sigma</strong> (<em>float</em><em> or </em><em>None</em>) – The standard deviation to use in despeckling the radar linear depolarization ratio. Data above threshold is masked using a Gaussian filter</p></li>
+<li><p><strong>dbz_min</strong> (<em>float</em><em> or </em><em>None</em>) – The minimum radar reflectivity value</p></li>
+<li><p><strong>vel_min</strong> (<em>float</em><em> or </em><em>None</em>) – The minimum Doppler velocity value of interest. Data will be masked below threshold (m/s)</p></li>
+<li><p><strong>width_min</strong> (<em>float</em><em> or </em><em>None</em>) – The minimum spectrum width value of interest. Data will be masked below threshold (m/s)</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py method">
+<dt class="sig sig-object py" id="impacts_tools.er2.Crs.correct_ice_atten">
+<span class="sig-name descname"><span class="pre">correct_ice_atten</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">hiwrap</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">hrrr</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#impacts_tools.er2.Crs.correct_ice_atten" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="impacts_tools.er2.Crs.data">
+<span class="sig-name descname"><span class="pre">data</span></span><a class="headerlink" href="#impacts_tools.er2.Crs.data" title="Permalink to this definition">¶</a></dt>
+<dd><p>xarray.Dataset of radar variables and attributes</p>
+<dl class="simple">
+<dt>Dimensions:</dt><dd><ul class="simple">
+<li><p>range: xarray.DataArray(float) - The radar range gate</p></li>
+<li><p>time: np.array(np.datetime64[ns]) - The UTC time stamp</p></li>
+</ul>
+</dd>
+<dt>Coordinates:</dt><dd><ul class="simple">
+<li><p>range (range): xarray.DataArray(float) - The radar range gate</p></li>
+<li><p>height (range, time): xarray.DataArray(float) - Altitude of each range gate (m)</p></li>
+<li><p>time (time): np.array(np.datetime64[ns]) - The UTC time stamp</p></li>
+<li><p>distance (time): xarray.DataArray(float) - Along-track distance from the flight origin (m)</p></li>
+<li><p>lat (time): xarray.DataArray(float) - Latitude (degrees)</p></li>
+<li><p>lon (time): xarray.DataArray(float) - Longitude (degrees)</p></li>
+</ul>
+</dd>
+<dt>Variables:</dt><dd><ul class="simple">
+<li><p>dbz (range, time) : xarray.DataArray(float) - Equivalent reflectivity factor (db) with 1-sigma noise threshold applied</p></li>
+<li><p>vel (range, time) : xarray.DataArray(float) - Doppler velocity corrected to account for intrusion of horizontal reanalysis winds and nonuniform beam filling (m/s)</p></li>
+<li><p>width (range, time) : xarray.DataArray(float) - Doppler velocity spectrum width estimate including aircraft motion. 1-sigma noise threshold applied (m/s)</p></li>
+<li><p>ldr (range, time) : xarray.DataArray(float) - Linear depolarization ratio thresholded at 3-sigma (dB)</p></li>
+<li><p>vel_horiz_offset (range, time) : xarray.DataArray(float) - The horizontal wind offset used to correct Ka-band Doppler velocity [Vel_corr = Vel_uncorr - nubf_offset - horizwind_offset] (m/s)</p></li>
+<li><p>vel_nubf_offset (range, time) : xarray.DataArray(float) - The nonuniform beam filling (NUBF) offset used to correct Ku-band Doppler velocity (m/s)</p></li>
+<li><p>channel_mask (range, time): xarray.DataArray(int) - Composite image channel mask. 0: No signal, 1: Low-resolution pulse, 2: High-resolution pulse, 3: Chirp</p></li>
+<li><p>horizontal_resolution_ku (range) : xarray.DataArray(float) - Approximate horizontal resolution defined as width of spatial weighting after averaging as a function of radar range (m)</p></li>
+<li><p>dxdr (time) : xarray.DataArray(float) - Data cross-track distance from aircraft per radar range. Positive is starboard direction (m/m)</p></li>
+<li><p>dydr (time) : xarray.DataArray(float) - Data along-track distance from aircraft per radar range. Positive is forward direction (m/m)</p></li>
+<li><p>dzdr (time) : xarray.DataArray(float) - Data vertical distance from aircraft per radar range. Positive is upward direction (m/m)</p></li>
+<li><p>er2_altitude (time) : xarray.DataArray(float) - Aircraft height above sea level (m)</p></li>
+<li><p>er2_heading (time) : xarray.DataArray(float) - Aircraft heading in degrees from north. 90 degrees is eastward pointing (degrees)</p></li>
+<li><p>er2_pitch (time) : xarray.DataArray(float) - Aircraft pitch (degrees)</p></li>
+<li><p>er2_roll (time) : xarray.DataArray(float) - Aircraft roll (degrees)</p></li>
+<li><p>er2_drift (time) : xarray.DataArray(float) - Distance between track and heading (degrees)</p></li>
+<li><p>er2_EastVel (time) : xarray.DataArray(float) - Eastward component of velocity (m/s)</p></li>
+<li><p>er2_NorthVel (time) : xarray.DataArray(float) - Northward component of velocity (m/s)</p></li>
+<li><p>er2_upVel (time) : xarray.DataArray(float) - Upward velocity (m/s)</p></li>
+<li><p>er2_track (time) : xarray.DataArray(float) - Direction from motion in degrees from north. 90 degrees is eastward motion (degrees)</p></li>
+<li><p>er2_motion (time) : xarray.DataArray(float) - Estimated aircraft motion notmal to the beam, subtracted from Doppler estimate. Smoothed to a 2 second average motion (m/s)</p></li>
+</ul>
+</dd>
+<dt>Attribute Information:</dt><dd><p>Experiment, Date, Aircraft, Radar Name, Data Contact, Instrument PI, Mission PI, Antenna Size,
+Antenna one-way 3dB beamwidth (degrees), Number of pulses, Radar transmit frequency (Hz), Radar transmit wavelength (m),
+Range gate spacing (m), Nominal antenna pointing, PRI, vertical resolution</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="impacts_tools.er2.Crs.readfile">
+<span class="sig-name descname"><span class="pre">readfile</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">filepath</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">start_time</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">end_time</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#impacts_tools.er2.Crs.readfile" title="Permalink to this definition">¶</a></dt>
+<dd><p>Reads the CRS data file and unpacks the fields into an xarray.Dataset</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>filepath</strong> (<em>str</em>) – Path to the data file</p></li>
+<li><p><strong>start_time</strong> (<em>np.datetime64</em><em> or </em><em>None</em>) – The initial time of interest</p></li>
+<li><p><strong>end_time</strong> (<em>np.datetime64</em><em> or </em><em>None</em>) – The final time of interest</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p><strong>data</strong> – The unpacked dataset</p>
+</dd>
+<dt class="field-odd">Return type</dt>
+<dd class="field-odd"><p>xarray.Dataset</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="impacts_tools.er2.Er2">
+<em class="property"><span class="pre">class</span> </em><span class="sig-prename descclassname"><span class="pre">impacts_tools.er2.</span></span><span class="sig-name descname"><span class="pre">Er2</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">date</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">filepath</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#impacts_tools.er2.Er2" title="Permalink to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>A class to represent the ER2 aircraft during the IMPACTS field campaign</p>
+<dl class="simple">
+<dt>time<span class="classifier">array(datetime)</span></dt><dd><p>the time in UTC</p>
+</dd>
+<dt>lat<span class="classifier">array(float)</span></dt><dd><p>the latitude of the ER2</p>
+</dd>
+<dt>lon<span class="classifier">array(float)</span></dt><dd><p>the longitude of the ER2</p>
+</dd>
+<dt>alt<span class="classifier">array(float)</span></dt><dd><p>the altitude of the ER2</p>
+</dd>
+<dt>pitch<span class="classifier">array(float)</span></dt><dd><p>the pitch of the aircraft</p>
+</dd>
+<dt>roll<span class="classifier">array(float)</span></dt><dd><p>the roll of the aircraft</p>
+</dd>
+<dt>drift<span class="classifier">array(float)</span></dt><dd><p>the drift of the aircraft</p>
+</dd>
+<dt>flight_legs: array(datetime)</dt><dd><p>an array containing the start and end time of each flight leg during a storm</p>
+</dd>
+</dl>
+<dl class="py method">
+<dt class="sig sig-object py" id="impacts_tools.er2.Er2.from_instrument">
+<em class="property"><span class="pre">classmethod</span> </em><span class="sig-name descname"><span class="pre">from_instrument</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">er2params</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#impacts_tools.er2.Er2.from_instrument" title="Permalink to this definition">¶</a></dt>
+<dd><p>Alternative constructor to initialize the ER2 object directly from an instrument data file</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>er2params</strong> (<em>xarray.DataSet</em><em>(</em><em>)</em>) – a dataset of attributes to populate the ER2 object if it’s initialized from an instrument</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="impacts_tools.er2.Er2.readfile">
+<span class="sig-name descname"><span class="pre">readfile</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">filepath</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#impacts_tools.er2.Er2.readfile" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="impacts_tools.er2.Exrad">
+<em class="property"><span class="pre">class</span> </em><span class="sig-prename descclassname"><span class="pre">impacts_tools.er2.</span></span><span class="sig-name descname"><span class="pre">Exrad</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">filepath</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">start_time</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">end_time</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">atten_file</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_roll</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dbz_sigma</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">vel_sigma</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">width_sigma</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dbz_min</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">vel_min</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">width_min</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#impacts_tools.er2.Exrad" title="Permalink to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#impacts_tools.er2.Radar" title="impacts_tools.er2.Radar"><code class="xref py py-class docutils literal notranslate"><span class="pre">impacts_tools.er2.Radar</span></code></a></p>
+<p>A class to represent the EXRAD nadir pointing radar flown on the ER2 during the IMPACTS field campaign.
+Inherits from Radar()</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>filepath</strong> (<em>str</em>) – File path to the CRS data file</p></li>
+<li><p><strong>start_time</strong> (<em>np.datetime64</em><em> or </em><em>None</em>) – The initial time of interest eg. if looking at a single flight leg</p></li>
+<li><p><strong>end_time</strong> (<em>np.datetime64</em><em> or </em><em>None</em>) – The final time of interest eg. if looking at a single flight leg</p></li>
+<li><p><strong>atten_file</strong> (<em>str</em><em> or </em><em>None</em>) – Path to file containing gridded attenuation due to atmospheric gases</p></li>
+<li><p><strong>max_roll</strong> (<em>float</em><em> or </em><em>None</em>) – The maximum roll angle of the aircraft in degrees, used to mask times with the aircraft is turning and the radars are off-nadir</p></li>
+<li><p><strong>dbz_sigma</strong> (<em>float</em><em> or </em><em>None</em>) – The standard deviation to use in despeckling the radar reflectivity. Data above threshold is masked using a Gaussian filter</p></li>
+<li><p><strong>vel_sigma</strong> (<em>float</em><em> or </em><em>None</em>) – The standard deviation to use in despeckling the radar Doppler velocity. Data above threshold is masked using a Gaussian filter</p></li>
+<li><p><strong>width_sigma</strong> (<em>float</em><em> or </em><em>None</em>) – The standard deviation to use in despeckling the radar spectrum width. Data above threshold is masked using a Gaussian filter</p></li>
+<li><p><strong>dbz_min</strong> (<em>float</em><em> or </em><em>None</em>) – The minimum radar reflectivity value</p></li>
+<li><p><strong>vel_min</strong> (<em>float</em><em> or </em><em>None</em>) – The minimum Doppler velocity value of interest. Data will be masked below threshold (m/s)</p></li>
+<li><p><strong>width_min</strong> (<em>float</em><em> or </em><em>None</em>) – The minimum spectrum width value of interest. Data will be masked below threshold (m/s)</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py method">
+<dt class="sig sig-object py" id="impacts_tools.er2.Exrad.correct_attenuation">
+<span class="sig-name descname"><span class="pre">correct_attenuation</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">atten_file</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#impacts_tools.er2.Exrad.correct_attenuation" title="Permalink to this definition">¶</a></dt>
+<dd><p>Correct reflectivity for attenuation at X-band due to atmospheric gases.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>atten_file</strong> (<em>str</em>) – filepath to attenuation data</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="impacts_tools.er2.Exrad.data">
+<span class="sig-name descname"><span class="pre">data</span></span><a class="headerlink" href="#impacts_tools.er2.Exrad.data" title="Permalink to this definition">¶</a></dt>
+<dd><p>xarray.Dataset of radar variables and attributes</p>
+<dl class="simple">
+<dt>Dimensions:</dt><dd><ul class="simple">
+<li><p>range: xarray.DataArray(float) - The radar range gate</p></li>
+<li><p>time: np.array(np.datetime64[ns]) - The UTC time stamp</p></li>
+</ul>
+</dd>
+<dt>Coordinates:</dt><dd><ul class="simple">
+<li><p>range (range): xarray.DataArray(float) - The radar range gate</p></li>
+<li><p>height (range, time): xarray.DataArray(float) - Altitude of each range gate (m)</p></li>
+<li><p>time (time): np.array(np.datetime64[ns]) - The UTC time stamp</p></li>
+<li><p>distance (time): xarray.DataArray(float) - Along-track distance from the flight origin (m)</p></li>
+<li><p>lat (time): xarray.DataArray(float) - Latitude (degrees)</p></li>
+<li><p>lon (time): xarray.DataArray(float) - Longitude (degrees)</p></li>
+</ul>
+</dd>
+<dt>Variables:</dt><dd><ul class="simple">
+<li><p>dbz (range, time) : xarray.DataArray(float) - Equivalent reflectivity factor (db) with 1-sigma noise threshold applied</p></li>
+<li><p>vel (range, time) : xarray.DataArray(float) - Doppler velocity corrected to account for intrusion of horizontal reanalysis winds and nonuniform beam filling (m/s)</p></li>
+<li><p>width (range, time) : xarray.DataArray(float) - Doppler velocity spectrum width estimate including aircraft motion. 1-sigma noise threshold applied (m/s)</p></li>
+<li><p>vel_horiz_offset (range, time) : xarray.DataArray(float) - The horizontal wind offset used to correct Ka-band Doppler velocity [Vel_corr = Vel_uncorr - nubf_offset - horizwind_offset] (m/s)</p></li>
+<li><p>vel_nubf_offset (range, time) : xarray.DataArray(float) - The nonuniform beam filling (NUBF) offset used to correct Ku-band Doppler velocity (m/s)</p></li>
+<li><p>channel_mask (range, time): xarray.DataArray(int) - Composite image channel mask. 0: No signal, 1: Low-resolution pulse, 2: High-resolution pulse, 3: Chirp</p></li>
+<li><p>horizontal_resolution_ku (range) : xarray.DataArray(float) - Approximate horizontal resolution defined as width of spatial weighting after averaging as a function of radar range (m)</p></li>
+<li><p>dxdr (time) : xarray.DataArray(float) - Data cross-track distance from aircraft per radar range. Positive is starboard direction (m/m)</p></li>
+<li><p>dydr (time) : xarray.DataArray(float) - Data along-track distance from aircraft per radar range. Positive is forward direction (m/m)</p></li>
+<li><p>dzdr (time) : xarray.DataArray(float) - Data vertical distance from aircraft per radar range. Positive is upward direction (m/m)</p></li>
+<li><p>er2_altitude (time) : xarray.DataArray(float) - Aircraft height above sea level (m)</p></li>
+<li><p>er2_heading (time) : xarray.DataArray(float) - Aircraft heading in degrees from north. 90 degrees is eastward pointing (degrees)</p></li>
+<li><p>er2_pitch (time) : xarray.DataArray(float) - Aircraft pitch (degrees)</p></li>
+<li><p>er2_roll (time) : xarray.DataArray(float) - Aircraft roll (degrees)</p></li>
+<li><p>er2_drift (time) : xarray.DataArray(float) - Distance between track and heading (degrees)</p></li>
+<li><p>er2_EastVel (time) : xarray.DataArray(float) - Eastward component of velocity (m/s)</p></li>
+<li><p>er2_NorthVel (time) : xarray.DataArray(float) - Northward component of velocity (m/s)</p></li>
+<li><p>er2_upVel (time) : xarray.DataArray(float) - Upward velocity (m/s)</p></li>
+<li><p>er2_track (time) : xarray.DataArray(float) - Direction from motion in degrees from north. 90 degrees is eastward motion (degrees)</p></li>
+<li><p>er2_motion (time) : xarray.DataArray(float) - Estimated aircraft motion notmal to the beam, subtracted from Doppler estimate. Smoothed to a 2 second average motion (m/s)</p></li>
+</ul>
+</dd>
+<dt>Attribute Information:</dt><dd><p>Experiment, Date, Aircraft, Radar Name, Data Contact, Instrument PI, Mission PI, Antenna Size,
+Antenna one-way 3dB beamwidth (degrees), Number of pulses, Radar transmit frequency (Hz), Radar transmit wavelength (m),
+Range gate spacing (m), Nominal antenna pointing, PRI, vertical resolution</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="impacts_tools.er2.Exrad.readfile">
+<span class="sig-name descname"><span class="pre">readfile</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">filepath</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">start_time</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">end_time</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#impacts_tools.er2.Exrad.readfile" title="Permalink to this definition">¶</a></dt>
+<dd><p>Reads the EXRAD data file and unpacks the fields into an xarray.Dataset</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>filepath</strong> (<em>str</em>) – Path to the data file</p></li>
+<li><p><strong>start_time</strong> (<em>np.datetime64</em><em> or </em><em>None</em>) – The initial time of interest</p></li>
+<li><p><strong>end_time</strong> (<em>np.datetime64</em><em> or </em><em>None</em>) – The final time of interest</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p><strong>data</strong> – The unpacked dataset</p>
+</dd>
+<dt class="field-odd">Return type</dt>
+<dd class="field-odd"><p>xarray.Dataset</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="impacts_tools.er2.Hiwrap">
+<em class="property"><span class="pre">class</span> </em><span class="sig-prename descclassname"><span class="pre">impacts_tools.er2.</span></span><span class="sig-name descname"><span class="pre">Hiwrap</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">filepath</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">start_time</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">end_time</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">atten_file</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_roll</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dbz_sigma</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">vel_sigma</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">width_sigma</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dbz_min</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">vel_min</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">width_min</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#impacts_tools.er2.Hiwrap" title="Permalink to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#impacts_tools.er2.Radar" title="impacts_tools.er2.Radar"><code class="xref py py-class docutils literal notranslate"><span class="pre">impacts_tools.er2.Radar</span></code></a></p>
+<p>A class to represent the HIWRAP nadir pointing radar flown on the ER2 during the IMPACTS field campaign.
+Inherits from Radar()</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>filepath</strong> (<em>str</em>) – File path to the CRS data file</p></li>
+<li><p><strong>start_time</strong> (<em>np.datetime64</em><em> or </em><em>None</em>) – The initial time of interest eg. if looking at a single flight leg</p></li>
+<li><p><strong>end_time</strong> (<em>np.datetime64</em><em> or </em><em>None</em>) – The final time of interest eg. if looking at a single flight leg</p></li>
+<li><p><strong>atten_file</strong> (<em>str</em><em> or </em><em>None</em>) – Path to file containing gridded attenuation due to atmospheric gases</p></li>
+<li><p><strong>max_roll</strong> (<em>float</em><em> or </em><em>None</em>) – The maximum roll angle of the aircraft in degrees, used to mask times with the aircraft is turning and the radars are off-nadir</p></li>
+<li><p><strong>dbz_sigma</strong> (<em>float</em><em> or </em><em>None</em>) – The standard deviation to use in despeckling the radar reflectivity. Data above threshold is masked using a Gaussian filter</p></li>
+<li><p><strong>vel_sigma</strong> (<em>float</em><em> or </em><em>None</em>) – The standard deviation to use in despeckling the radar Doppler velocity. Data above threshold is masked using a Gaussian filter</p></li>
+<li><p><strong>width_sigma</strong> (<em>float</em><em> or </em><em>None</em>) – The standard deviation to use in despeckling the radar spectrum width. Data above threshold is masked using a Gaussian filter</p></li>
+<li><p><strong>ldr_sigma</strong> (<em>float</em><em> or </em><em>None</em>) – The standard deviation to use in despeckling the radar linear depolarization ratio. Data above threshold is masked using a Gaussian filter</p></li>
+<li><p><strong>dbz_min</strong> (<em>float</em><em> or </em><em>None</em>) – The minimum radar reflectivity value</p></li>
+<li><p><strong>vel_min</strong> (<em>float</em><em> or </em><em>None</em>) – The minimum Doppler velocity value of interest. Data will be masked below threshold (m/s)</p></li>
+<li><p><strong>width_min</strong> (<em>float</em><em> or </em><em>None</em>) – The minimum spectrum width value of interest. Data will be masked below threshold (m/s)</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py method">
+<dt class="sig sig-object py" id="impacts_tools.er2.Hiwrap.correct_attenuation">
+<span class="sig-name descname"><span class="pre">correct_attenuation</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">atten_file</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#impacts_tools.er2.Hiwrap.correct_attenuation" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="impacts_tools.er2.Hiwrap.correct_roll">
+<span class="sig-name descname"><span class="pre">correct_roll</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">max_roll</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#impacts_tools.er2.Hiwrap.correct_roll" title="Permalink to this definition">¶</a></dt>
+<dd><p>Mask values in the dataset where the roll angle of the ER2 is greater
+than the maximum value provided</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>max_roll</strong> (<em>float</em>) – The maximum roll angle of the aircraft in degrees</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="impacts_tools.er2.Hiwrap.data">
+<span class="sig-name descname"><span class="pre">data</span></span><a class="headerlink" href="#impacts_tools.er2.Hiwrap.data" title="Permalink to this definition">¶</a></dt>
+<dd><p>xarray.Dataset of radar variables and attributes</p>
+<dl class="simple">
+<dt>Dimensions:</dt><dd><ul class="simple">
+<li><p>range: xarray.DataArray(float) - The radar range gate</p></li>
+<li><p>time: np.array(np.datetime64[ns]) - The UTC time stamp</p></li>
+</ul>
+</dd>
+<dt>Coordinates:</dt><dd><ul class="simple">
+<li><p>range (range): xarray.DataArray(float) - The radar range gate</p></li>
+<li><p>height (range, time): xarray.DataArray(float) - Altitude of each range gate (m)</p></li>
+<li><p>time (time): np.array(np.datetime64[ns]) - The UTC time stamp</p></li>
+<li><p>distance (time): xarray.DataArray(float) - Along-track distance from the flight origin (m)</p></li>
+<li><p>lat (time): xarray.DataArray(float) - Latitude (degrees)</p></li>
+<li><p>lon (time): xarray.DataArray(float) - Longitude (degrees)</p></li>
+</ul>
+</dd>
+<dt>Variables:</dt><dd><ul class="simple">
+<li><p>dbz_ka (range, time) : xarray.DataArray(float) - Ka-band equivalent reflectivity factor (db) with 1-sigma noise threshold applied</p></li>
+<li><p>dbz_ku (range, time) : xarray.DataArray(float) - Ku-band equivalent reflectivity factor (db) with 1-sigma noise threshold applied</p></li>
+<li><p>vel_ka (range, time) : xarray.DataArray(float) - Ka-band Doppler velocity corrected to account for intrusion of horizontal reanalysis winds and nonuniform beam filling (m/s)</p></li>
+<li><p>vel_ku (range, time) : xarray.DataArray(float) - Ku-band Doppler velocity corrected to account for intrusion of horizontal reanalysis winds and nonuniform beam filling (m/s)</p></li>
+<li><p>width_ka (range, time) : xarray.DataArray(float) - Ka-band Doppler velocity spectrum width estimate including aircraft motion. 1-sigma noise threshold applied (m/s)</p></li>
+<li><p>width_ku (range, time) : xarray.DataArray(float) - Ku-band Doppler velocity spectrum width estimate including aircraft motion. 1-sigma noise threshold applied (m/s)</p></li>
+<li><p>ldr_ka (range, time) : xarray.DataArray(float) - Ka-band linear depolarization ratio thresholded at 3-sigma (dB)</p></li>
+<li><p>ldr_ku (range, time) : xarray.DataArray(float) - Ku-band linear depolarization ratio thresholded at 3-sigma (dB)</p></li>
+<li><p>vel_horiz_offset_ka (range, time) : xarray.DataArray(float) - The horizontal wind offset used to correct Ka-band Doppler velocity [Vel_corr = Vel_uncorr - nubf_offset - horizwind_offset] (m/s)</p></li>
+<li><p>vel_horiz_offset_ku (range, time) : xarray.DataArray(float) - The horizontal wind offset used to correct Ku-band Doppler velocity [Vel_corr = Vel_uncorr - nubf_offset - horizwind_offset] (m/s)</p></li>
+<li><p>vel_nubf_offset_ku (range, time) : xarray.DataArray(float) - The nonuniform beam filling (NUBF) offset used to correct Ku-band Doppler velocity (m/s)</p></li>
+<li><p>channel_mask_ka (range, time): xarray.DataArray(int) - Composite Ka-band image channel mask. 0: No signal, 1: Low-resolution pulse, 2: High-resolution pulse, 3: Chirp</p></li>
+<li><p>channel_mask_ku (range, time): xarray.DataArray(int) - Composite Ku-band image channel mask. 0: No signal, 1: Low-resolution pulse, 2: High-resolution pulse, 3: Chirp</p></li>
+<li><p>horizontal_resolution_ka (range) : xarray.DataArray(float) - Approximate horizontal resolution defined as width of spatial weighting after averaging as a function of radar range (m)</p></li>
+<li><p>horizontal_resolution_ku (range) : xarray.DataArray(float) - Approximate horizontal resolution defined as width of spatial weighting after averaging as a function of radar range (m)</p></li>
+<li><p>dxdr (time) : xarray.DataArray(float) - Data cross-track distance from aircraft per radar range. Positive is starboard direction (m/m)</p></li>
+<li><p>dydr (time) : xarray.DataArray(float) - Data along-track distance from aircraft per radar range. Positive is forward direction (m/m)</p></li>
+<li><p>dzdr (time) : xarray.DataArray(float) - Data vertical distance from aircraft per radar range. Positive is upward direction (m/m)</p></li>
+<li><p>er2_altitude (time) : xarray.DataArray(float) - Aircraft height above sea level (m)</p></li>
+<li><p>er2_heading (time) : xarray.DataArray(float) - Aircraft heading in degrees from north. 90 degrees is eastward pointing (degrees)</p></li>
+<li><p>er2_pitch (time) : xarray.DataArray(float) - Aircraft pitch (degrees)</p></li>
+<li><p>er2_roll (time) : xarray.DataArray(float) - Aircraft roll (degrees)</p></li>
+<li><p>er2_drift (time) : xarray.DataArray(float) - Distance between track and heading (degrees)</p></li>
+<li><p>er2_EastVel (time) : xarray.DataArray(float) - Eastward component of velocity (m/s)</p></li>
+<li><p>er2_NorthVel (time) : xarray.DataArray(float) - Northward component of velocity (m/s)</p></li>
+<li><p>er2_upVel (time) : xarray.DataArray(float) - Upward velocity (m/s)</p></li>
+<li><p>er2_track (time) : xarray.DataArray(float) - Direction from motion in degrees from north. 90 degrees is eastward motion (degrees)</p></li>
+<li><p>er2_motion (time) : xarray.DataArray(float) - Estimated aircraft motion notmal to the beam, subtracted from Doppler estimate. Smoothed to a 2 second average motion (m/s)</p></li>
+</ul>
+</dd>
+<dt>Attribute Information:</dt><dd><p>Experiment, Date, Aircraft, Radar Name, Data Contact, Instrument PI, Mission PI, Antenna Size,
+Antenna one-way 3dB beamwidth (degrees), Number of pulses, Radar transmit frequency (Hz), Radar transmit wavelength (m),
+Range gate spacing (m), Nominal antenna pointing, PRI, vertical resolution</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="impacts_tools.er2.Hiwrap.readfile">
+<span class="sig-name descname"><span class="pre">readfile</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">filepath</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">start_time</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">end_time</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#impacts_tools.er2.Hiwrap.readfile" title="Permalink to this definition">¶</a></dt>
+<dd><p>Reads the HIWRAP data file and unpacks the fields into an xarray.Dataset</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>filepath</strong> (<em>str</em>) – Path to the data file</p></li>
+<li><p><strong>start_time</strong> (<em>np.datetime64</em><em> or </em><em>None</em>) – The initial time of interest</p></li>
+<li><p><strong>end_time</strong> (<em>np.datetime64</em><em> or </em><em>None</em>) – The final time of interest</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p><strong>data</strong> – The unpacked dataset</p>
+</dd>
+<dt class="field-odd">Return type</dt>
+<dd class="field-odd"><p>xarray.Dataset</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="impacts_tools.er2.Radar">
+<em class="property"><span class="pre">class</span> </em><span class="sig-prename descclassname"><span class="pre">impacts_tools.er2.</span></span><span class="sig-name descname"><span class="pre">Radar</span></span><a class="headerlink" href="#impacts_tools.er2.Radar" title="Permalink to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">abc.ABC</span></code></p>
+<p>A class to represent the various radars flown on the ER-2 aircraft during IMAPCTS.
+Radar is an Abstract Base Class - meaning we always require a more specific class
+to be instantiated - ie you have to call Exrad() or Hiwrap(), you can’t just call Radar()</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>data</strong> (<em>xarray.Dataset</em><em>(</em><em>)</em>) – Radar data and attributes</p>
+</dd>
+</dl>
+<dl class="py method">
+<dt class="sig sig-object py" id="impacts_tools.er2.Radar.correct_roll">
+<span class="sig-name descname"><span class="pre">correct_roll</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">max_roll</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#impacts_tools.er2.Radar.correct_roll" title="Permalink to this definition">¶</a></dt>
+<dd><p>Mask values in the dataset where the roll angle of the ER2 is greater
+than the maximum value provided</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>max_roll</strong> (<em>float</em>) – The maximum roll angle of the aircraft in degrees</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="impacts_tools.er2.Radar.despeckle">
+<span class="sig-name descname"><span class="pre">despeckle</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">data_array</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sigma</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#impacts_tools.er2.Radar.despeckle" title="Permalink to this definition">¶</a></dt>
+<dd><p>Despeckle the radar data by applying a Gaussion filter with a given standard deviation</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>data_array</strong> (<em>xarray.DataArray</em><em>(</em><em>)</em>) – The field to despeckle</p></li>
+<li><p><strong>sigma</strong> (<em>float</em>) – The standard deviation to apply to the gaussian filter</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="impacts_tools.er2.Radar.get_flight_legs">
+<span class="sig-name descname"><span class="pre">get_flight_legs</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#impacts_tools.er2.Radar.get_flight_legs" title="Permalink to this definition">¶</a></dt>
+<dd><p>Get the start and end time stamps for each leg of this flight.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns</dt>
+<dd class="field-odd"><p><strong>flight_leg</strong> – Tuples of the start and end time of each flight leg.</p>
+</dd>
+<dt class="field-even">Return type</dt>
+<dd class="field-even"><p>list of tuples</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="impacts_tools.er2.Radar.readfile">
+<em class="property"><span class="pre">abstract</span> </em><span class="sig-name descname"><span class="pre">readfile</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">filepath</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#impacts_tools.er2.Radar.readfile" title="Permalink to this definition">¶</a></dt>
+<dd><p>This is an abstract method since only inherited classes will be used to read radar data into objects.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="impacts_tools.er2.VAD">
+<em class="property"><span class="pre">class</span> </em><span class="sig-prename descclassname"><span class="pre">impacts_tools.er2.</span></span><span class="sig-name descname"><span class="pre">VAD</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">filepath</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#impacts_tools.er2.VAD" title="Permalink to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>A class to represent the Velocity-Azimuth Display (VAD) wind product derived from the EXRAD conical scans during the IMPACTS field campaign.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>data</strong> (<em>xarray.Dataset</em>) – dataset containing VAD data and attributes</p>
+</dd>
+</dl>
+<dl class="py method">
+<dt class="sig sig-object py" id="impacts_tools.er2.VAD.readfile">
+<span class="sig-name descname"><span class="pre">readfile</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">filepath</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">start_time</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">end_time</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#impacts_tools.er2.VAD.readfile" title="Permalink to this definition">¶</a></dt>
+<dd><p>Reads the VAD data file and unpacks the fields into an xarray.Dataset</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>filepath</strong> (<em>str</em>) – Path to the data file</p></li>
+<li><p><strong>start_time</strong> (<em>np.datetime64</em><em> or </em><em>None</em>) – The initial time of interest</p></li>
+<li><p><strong>end_time</strong> (<em>np.datetime64</em><em> or </em><em>None</em>) – The final time of interest</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p><strong>data</strong> – The unpacked dataset</p>
+</dd>
+<dt class="field-odd">Return type</dt>
+<dd class="field-odd"><p>xarray.Dataset</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="impacts_tools.er2.VAD.regrid_to_radar">
+<span class="sig-name descname"><span class="pre">regrid_to_radar</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">radar</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#impacts_tools.er2.VAD.regrid_to_radar" title="Permalink to this definition">¶</a></dt>
+<dd><p>Regrids the VAD data to a nadir radar object, EXRAD, HIWRAP, or CRS</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>radar</strong> (<a class="reference internal" href="#impacts_tools.er2.Radar" title="impacts_tools.er2.Radar"><em>er2.Radar</em></a>) – the radar object to regrid to</p>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p><strong>regridded_data_2</strong> – the VAD data set interpolated to the Radar grid</p>
+</dd>
+<dt class="field-odd">Return type</dt>
+<dd class="field-odd"><p>xarray.Dataset</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+</div>
+<div class="section" id="module-impacts_tools.p3">
+<span id="impacts-tools-p3-module"></span><h2>impacts_tools.p3 module<a class="headerlink" href="#module-impacts_tools.p3" title="Permalink to this headline">¶</a></h2>
+<p>Classes for IMPACTS P3 Instruments</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="impacts_tools.p3.P3">
+<em class="property"><span class="pre">class</span> </em><span class="sig-prename descclassname"><span class="pre">impacts_tools.p3.</span></span><span class="sig-name descname"><span class="pre">P3</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">filepath</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">date</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#impacts_tools.p3.P3" title="Permalink to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py method">
+<dt class="sig sig-object py" id="impacts_tools.p3.P3.readfile">
+<span class="sig-name descname"><span class="pre">readfile</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">filepath</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#impacts_tools.p3.P3.readfile" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+</div>
+<div class="section" id="module-impacts_tools">
+<span id="module-contents"></span><h2>Module contents<a class="headerlink" href="#module-impacts_tools" title="Permalink to this headline">¶</a></h2>
+</div>
+</div>
+
+
+           </div>
+           
+          </div>
+          <footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="footer navigation">
+        <a href="installation.html" class="btn btn-neutral float-right" title="Installation" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+        <a href="index.html" class="btn btn-neutral float-left" title="The Investigation of Microphysics and Precipitation for Atlantic Coast-Threatening Snowstorms (IMPACTS)" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>
+        &#169; Copyright 2021, University of Washington.
+
+    </p>
+  </div>
+    
+    
+    
+    Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    
+    provided by <a href="https://readthedocs.org">Read the Docs</a>. 
+
+</footer>
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+  
+
+  <script type="text/javascript">
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script>
+
+  
+  
+    
+   
+
+</body>
+</html>
