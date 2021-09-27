@@ -4,7 +4,8 @@
 <html class="writer-html5" lang="en" >
 <head>
   <meta charset="utf-8" />
-  
+  <meta name="generator" content="Docutils 0.17.1: http://docutils.sourceforge.net/" />
+
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   
   <title>The Investigation of Microphysics and Precipitation for Atlantic Coast-Threatening Snowstorms (IMPACTS) &mdash; IMPACTS-TOOLS  documentation</title>
@@ -36,13 +37,14 @@
         <script src="_static/jquery.js"></script>
         <script src="_static/underscore.js"></script>
         <script src="_static/doctools.js"></script>
+        <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
     
     <script type="text/javascript" src="_static/js/theme.js"></script>
 
     
     <link rel="index" title="Index" href="genindex.html" />
     <link rel="search" title="Search" href="search.html" />
-    <link rel="next" title="impacts_tools package" href="impacts_tools.html" /> 
+    <link rel="next" title="API Reference" href="impacts_tools.html" /> 
 </head>
 
 <body class="wy-body-for-nav">
@@ -92,6 +94,10 @@
 <li class="toctree-l1"><a class="reference internal" href="impacts_tools.html">API Reference</a></li>
 <li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="contributing.html">Contributing</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Example Notebooks</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="notebooks/plot_radar_xsections.html">Plot Radar Cross-Sections</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Links</span></p>
 <ul>
@@ -166,7 +172,31 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
             
-  <div class="section" id="the-investigation-of-microphysics-and-precipitation-for-atlantic-coast-threatening-snowstorms-impacts">
+  
+<style>
+/* CSS overrides for sphinx_rtd_theme */
+
+/* 24px margin */
+.nbinput.nblast.container,
+.nboutput.nblast.container {
+    margin-bottom: 19px;  /* padding has already 5px */
+}
+
+/* ... except between code cells! */
+.nblast.container + .nbinput.container {
+    margin-top: -19px;
+}
+
+.admonition > p:before {
+    margin-right: 4px;  /* make room for the exclamation icon */
+}
+
+/* Fix math alignment, see https://github.com/rtfd/sphinx_rtd_theme/pull/686 */
+.math {
+    text-align: unset;
+}
+</style>
+<section id="the-investigation-of-microphysics-and-precipitation-for-atlantic-coast-threatening-snowstorms-impacts">
 <h1>The Investigation of Microphysics and Precipitation for Atlantic Coast-Threatening Snowstorms (IMPACTS)<a class="headerlink" href="#the-investigation-of-microphysics-and-precipitation-for-atlantic-coast-threatening-snowstorms-impacts" title="Permalink to this headline">¶</a></h1>
 <div class="toctree-wrapper compound">
 </div>
@@ -177,8 +207,8 @@
 <p>The Investigation of Microphysics and Precipitation for Atlantic Coast-Threatening Snowstorms (IMPACTS)
 is a NASA Earth Venture Suborbital-3 (EVS-3) aircraft-based field campaign to study precipitation banding
 in severe winter cyclones in the Northeast United States.</p>
-</div>
-<div class="section" id="what-is-impacts-tools">
+</section>
+<section id="what-is-impacts-tools">
 <h1>What is IMPACTS-TOOLS?<a class="headerlink" href="#what-is-impacts-tools" title="Permalink to this headline">¶</a></h1>
 <p>This package provides an object-oriented data model for observations collected during the Investigation of Microphysics
 and Precipitation for Atlantic Coast-Threatening Snowstorms (IMPACTS) Field Campaign.
@@ -190,8 +220,8 @@ during snowstorms in winter 2020, 2022, and 2023.  IMPACTS_TOOLS may eventually 
 for advanced analysis as papers are published by the IMPACTS Science Team, but the initial goals are to make things
 that should be easy - reading the data files, filtering by time and flight leg, plotting data from multiple instruments on
 the same figures - easier for a non-expert to get started with.</p>
-</div>
-<div class="section" id="links">
+</section>
+<section id="links">
 <h1>Links<a class="headerlink" href="#links" title="Permalink to this headline">¶</a></h1>
 <ul class="simple">
 <li><p><a class="reference external" href="https://github.com/torimcd/impacts_tools">GitHub Repository</a></p></li>
@@ -200,7 +230,7 @@ the same figures - easier for a non-expert to get started with.</p>
 <li><p><a class="reference external" href="https://espo.nasa.gov/impacts/content/IMPACTS">NASA ESPO IMPACTS Home Page</a></p></li>
 <li><p><a class="reference internal" href="search.html"><span class="std std-ref">Search Page</span></a></p></li>
 </ul>
-</div>
+</section>
 
 
            </div>
