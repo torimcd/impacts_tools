@@ -4,7 +4,8 @@
 <html class="writer-html5" lang="en" >
 <head>
   <meta charset="utf-8" />
-  
+  <meta name="generator" content="Docutils 0.17.1: http://docutils.sourceforge.net/" />
+
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   
   <title>API Reference &mdash; IMPACTS-TOOLS  documentation</title>
@@ -36,6 +37,7 @@
         <script src="_static/jquery.js"></script>
         <script src="_static/underscore.js"></script>
         <script src="_static/doctools.js"></script>
+        <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
     
     <script type="text/javascript" src="_static/js/theme.js"></script>
 
@@ -99,6 +101,10 @@
 </li>
 <li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="contributing.html">Contributing</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Example Notebooks</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="notebooks/plot_radar_xsections.html">Plot Radar Cross-Sections</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Links</span></p>
 <ul>
@@ -173,12 +179,36 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
             
-  <div class="section" id="impacts-tools-package">
+  
+<style>
+/* CSS overrides for sphinx_rtd_theme */
+
+/* 24px margin */
+.nbinput.nblast.container,
+.nboutput.nblast.container {
+    margin-bottom: 19px;  /* padding has already 5px */
+}
+
+/* ... except between code cells! */
+.nblast.container + .nbinput.container {
+    margin-top: -19px;
+}
+
+.admonition > p:before {
+    margin-right: 4px;  /* make room for the exclamation icon */
+}
+
+/* Fix math alignment, see https://github.com/rtfd/sphinx_rtd_theme/pull/686 */
+.math {
+    text-align: unset;
+}
+</style>
+<section id="impacts-tools-package">
 <h1>API Reference<a class="headerlink" href="#impacts-tools-package" title="Permalink to this headline">¶</a></h1>
-<div class="section" id="submodules">
+<section id="submodules">
 <h2>Submodules<a class="headerlink" href="#submodules" title="Permalink to this headline">¶</a></h2>
-</div>
-<div class="section" id="module-impacts_tools.er2">
+</section>
+<section id="module-impacts_tools.er2">
 <span id="impacts-tools-er2-module"></span><h2>impacts_tools.er2 module<a class="headerlink" href="#module-impacts_tools.er2" title="Permalink to this headline">¶</a></h2>
 <p>Classes for IMPACTS ER2 Instruments</p>
 <dl class="py class">
@@ -661,8 +691,8 @@ than the maximum value provided</p>
 
 </dd></dl>
 
-</div>
-<div class="section" id="module-impacts_tools.p3">
+</section>
+<section id="module-impacts_tools.p3">
 <span id="impacts-tools-p3-module"></span><h2>impacts_tools.p3 module<a class="headerlink" href="#module-impacts_tools.p3" title="Permalink to this headline">¶</a></h2>
 <p>Classes for IMPACTS P3 Instruments</p>
 <dl class="py class">
@@ -676,11 +706,11 @@ than the maximum value provided</p>
 
 </dd></dl>
 
-</div>
-<div class="section" id="module-impacts_tools">
+</section>
+<section id="module-impacts_tools">
 <span id="module-contents"></span><h2>Module contents<a class="headerlink" href="#module-impacts_tools" title="Permalink to this headline">¶</a></h2>
-</div>
-</div>
+</section>
+</section>
 
 
            </div>
