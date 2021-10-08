@@ -145,3 +145,4 @@ cython_debug/
 **/.history
 
 .DS_Store
+docs/build/html/.DS_Store
