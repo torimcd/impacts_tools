@@ -545,7 +545,7 @@ class Crs(Radar):
             )
         
         aircraft_motion = xr.DataArray(
-            data = hdf['Products']['Information']['AircraftMotion'][:],
+            data = hdf['Products']['Information']['AircraftMotion'][:,0],
             dims = ["time"],
             coords = dict(
                 time = time_dt64,
@@ -597,21 +597,6 @@ class Crs(Radar):
                 units = hdf['Products']['Information']['Velocity_horizwind_offset_units'][0].decode('UTF-8')
             ) 
         )
-        vel_nubf_offset = xr.DataArray(
-            data = hdf['Products']['Information']['Velocity_nubf_offset'][:].T,
-            dims = ["range","time"],
-            coords = dict(
-                range = radar_range,
-                height = height,
-                time = time_dt64,
-                distance = nomdist,
-                lat = lat,
-                lon = lon),
-            attrs = dict(
-                description=hdf['Products']['Information']['Velocity_nubf_offset_description'][0].decode('UTF-8'),
-                units = hdf['Products']['Information']['Velocity_nubf_offset_units'][0].decode('UTF-8')
-            ) 
-        )
 
         # get meta data for attributes
         aircraft = hdf['Information']['Aircraft'][0].decode('UTF-8')
@@ -645,9 +630,8 @@ class Crs(Radar):
                 "vel": vel[:, time_inds],
                 "width": width[:, time_inds],
                 "vel_horiz_offset": vel_horizwind_offset[:, time_inds],
-                "vel_nubf_offset": vel_nubf_offset[:, time_inds],
                 "mask_copol": mask_copol[:, time_inds],
-                "horizontal_resolution": horiz_resolution[:, time_inds],
+                "horizontal_resolution": horiz_resolution[:],
                 "dxdr": dxdr[time_inds],
                 "dydr": dydr[time_inds],
                 "dzdr": dzdr[time_inds],
