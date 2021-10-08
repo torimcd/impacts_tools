@@ -98,7 +98,7 @@ class Radar(ABC):
         pass
 
 
-    def correct_roll(self, max_roll):
+    def mask_roll(self, max_roll):
         """
         Mask values in the dataset where the roll angle of the ER2 is greater
         than the maximum value provided
@@ -110,7 +110,7 @@ class Radar(ABC):
         """
 
         # retain where the plane is not rolling more than the max provided
-        return self.data.where(self.data['er2_roll'] < max_roll)
+        return self.data.where(abs(self.data['er2_roll']) < max_roll)
 
 
     def despeckle(self, data_array=None, sigma=1.):
@@ -241,7 +241,7 @@ class Crs(Radar):
 
         # mask values when aircraft is rolling
         if max_roll is not None:
-            self.data = self.correct_roll(max_roll)
+            self.data = self.mask_roll(max_roll)
 
         # despeckle
         if dbz_sigma is not None:
@@ -801,7 +801,7 @@ class Hiwrap(Radar):
 
         # mask values when aircraft is rolling
         if max_roll is not None:
-            self.correct_roll(max_roll)
+            self.mask_roll(max_roll)
 
 
     def readfile(self, filepath, start_time=None, end_time=None):
@@ -1399,8 +1399,6 @@ class Hiwrap(Radar):
     def correct_attenuation(self, atten_file):
         pass
 
-    def correct_roll(self, max_roll):
-        pass
 
 
 
@@ -1496,7 +1494,7 @@ class Exrad(Radar):
 
         # mask values when aircraft is rolling
         if max_roll is not None:
-            self.data = self.correct_roll(max_roll)
+            self.data = self.mask_roll(max_roll)
 
         if dbz_sigma is not None:
             self.data['dbz'] = self.despeckle(self.data['dbz'], dbz_sigma)
