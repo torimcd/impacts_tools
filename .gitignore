@@ -146,3 +146,4 @@ cython_debug/
 
 .DS_Store
 docs/build/html/.DS_Store
+src/impacts_tools/__pycache__/

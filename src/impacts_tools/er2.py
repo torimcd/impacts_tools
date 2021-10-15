@@ -87,6 +87,7 @@ class Radar(ABC):
         """
         This is an abstract method since only inherited classes will be used to instantiate Radar objects.
         """
+        self.name = None
         self.data = None
 
 
@@ -132,7 +133,73 @@ class Radar(ABC):
         # np.isfinite returns values that are not NAN or INF
         return data_array.where(np.isfinite(temp_datafiltered))
             
+    def calc_cfad(self, vel_bins=None, alt_bins=None, band=None):
+        """
+        Calculates the frequency of radial velocity values per altitude level
+        for making a contour-by-frequency (CFAD) plot 
 
+        Parameters
+        ----------
+        vel_bins : np.ndarray or None
+            the velocity bins to use. Defaults to np.linspace(-5., 5., num=101)
+        alt_bins : np.ndarray or None
+            The altitude bins to use. Defaults to alt_bins = np.linspace(100., 10000., num=45)
+        band : str
+            For HIWRAP, whether to use ka- or ku-band velocity
+
+        Returns
+        -------
+        cfad : [data, X, Y] 
+            The calculated velocity frequency as well as the X, Y meshgrid to plot it on
+        """
+        if vel_bins == None:
+            vel_bins = np.linspace(-5., 5., num=101)
+
+        if alt_bins == None:
+            alt_bins = np.linspace(100., 10000., num=45)
+
+        if band is not None:
+            vel_flat = np.ma.masked_invalid(self.data['vel_' + band.lower()].values.flatten())
+        else:
+            vel_flat = np.ma.masked_invalid(self.data['vel'].values.flatten())
+        
+        hght_flat = self.data['height'].values.flatten()
+        fall_speeds_flat = np.zeros_like(vel_flat)
+
+        vel_cfad = np.zeros((len(alt_bins)-1, len(vel_bins)-1))
+
+        for a in range(len(alt_bins)-1):
+            # get the indices for this altitude range
+            hght_inds = np.where((hght_flat>=alt_bins[a]) & (hght_flat<alt_bins[a+1]))[0]
+
+            # make sure there's at least some velocity data for this alt bin, loop through vel bins
+            if (len(hght_inds)>0) and (vel_flat[hght_inds].mask.sum() < len(hght_inds)): # 
+        
+                # total number of valid velocity gates for this altitude bin
+                num_valid_vel = len(hght_inds) - vel_flat[hght_inds].mask.sum() 
+        
+                for v in range(len(vel_bins)-1):
+                    vel_inds = np.where((hght_flat>=alt_bins[a]) & (hght_flat<alt_bins[a+1]) & (vel_flat>=vel_bins[v]) & (vel_flat<vel_bins[v+1]))[0]
+
+                    # there's at least some velocity data for this alt-vel bin, compute the frequency
+                    if (len(vel_inds)>0) and (vel_flat[vel_inds].mask.sum()<len(vel_inds)): 
+                
+                        # frequency of valid velocity gates for this alt-vel bin
+                        vel_cfad[a, v] = (len(vel_inds) - vel_flat[vel_inds].mask.sum()) / num_valid_vel 
+        
+        
+                vel_max_ind = np.where(vel_cfad[a,:]==vel_cfad[a,:].max())[0]
+
+                # subtract the velocity value of the max freq
+                fall_speeds_flat[hght_inds] = vel_flat[hght_inds] - vel_bins[vel_max_ind[0]]
+
+
+        cfad = np.ma.masked_where(vel_cfad==0.00, vel_cfad)
+        [X, Y] = np.meshgrid(vel_bins[:-1]+np.diff(vel_bins)/2, alt_bins[:-1]+np.diff(alt_bins)/2)
+
+        return [cfad, X, Y]
+
+        
 
     def get_flight_legs(self):
         """
@@ -189,6 +256,8 @@ class Crs(Radar):
         dbz_sigma=None, vel_sigma=None, width_sigma=None, ldr_sigma=None, dbz_min=None, vel_min=None, width_min=None):
 
     
+        self.name = 'CRS'
+
         # read the raw data
         self.data = self.readfile(filepath, start_time, end_time)
         """
@@ -680,9 +749,12 @@ class Crs(Radar):
 
         return ds
 
+
     def correct_ice_atten(self, hiwrap, hrrr):
         pass
 
+    def correct_attenuation(self, atten_file):
+        pass
 
 
 
@@ -729,6 +801,8 @@ class Hiwrap(Radar):
                 dbz_sigma=None, vel_sigma=None, width_sigma=None, 
                 dbz_min=None, vel_min=None, width_min=None):
     
+        self.name = 'HIWRAP'
+
         # create a dataset with both ka- and ku-band data
         self.data = self.readfile(filepath, start_time=start_time, end_time=end_time)
         """
@@ -1443,6 +1517,8 @@ class Exrad(Radar):
     def __init__(self, filepath, start_time=None, end_time=None, atten_file=None, max_roll=None, 
         dbz_sigma=None, vel_sigma=None, width_sigma=None, dbz_min=None, vel_min=None, width_min=None):
         
+        self.name = 'EXRAD'
+
         # read the raw data
         self.data = self.readfile(filepath, start_time, end_time)
         """
@@ -1975,6 +2051,8 @@ class VAD(object):
     :type data: xarray.Dataset
     """
     def __init__(self, filepath):
+        self.name = 'VAD'
+
         self.data = self.readfile(filepath)
 
     def readfile(self, filepath, start_time=None, end_time=None):
