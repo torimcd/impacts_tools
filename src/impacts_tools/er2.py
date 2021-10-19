@@ -2050,12 +2050,11 @@ class VAD(object):
     :param data: dataset containing VAD data and attributes
     :type data: xarray.Dataset
     """
-    def __init__(self, filepath):
+    def __init__(self, filepath, start_time=None, end_time=None):
         self.name = 'VAD'
+        self.data = self.readfile(filepath, start_time, end_time)
 
-        self.data = self.readfile(filepath)
-
-    def readfile(self, filepath, start_time=None, end_time=None):
+    def readfile(self, filepath, start_time, end_time):
         """
         Reads the VAD data file and unpacks the fields into an xarray.Dataset
 
@@ -2707,7 +2706,7 @@ class VAD(object):
                 "qc5": qc5
             },
 
-            coords= {
+            coords={
                 "range": radar_range,
                 "height": height,
                 "time": time_dt64,
