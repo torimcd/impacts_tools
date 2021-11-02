@@ -159,12 +159,15 @@ class Radar(ABC):
             alt_bins = np.linspace(100., 10000., num=45)
 
         if band is not None:
-            vel_flat = np.ma.masked_invalid(self.data['vel_' + band.lower()].values.flatten())
+            vel = self.data['vel_' + band.lower()]
+            
         else:
-            vel_flat = np.ma.masked_invalid(self.data['vel'].values.flatten())
-        
+            vel = self.data['vel']
+
+        vel_flat = np.ma.masked_invalid(vel.values.flatten())
+
         hght_flat = self.data['height'].values.flatten()
-        fall_speeds_flat = np.zeros_like(vel_flat)
+        vel_fallspeedsremoved_flat = np.zeros_like(vel_flat)
 
         vel_cfad = np.zeros((len(alt_bins)-1, len(vel_bins)-1))
 
@@ -191,13 +194,15 @@ class Radar(ABC):
                 vel_max_ind = np.where(vel_cfad[a,:]==vel_cfad[a,:].max())[0]
 
                 # subtract the velocity value of the max freq
-                fall_speeds_flat[hght_inds] = vel_flat[hght_inds] - vel_bins[vel_max_ind[0]]
+                vel_fallspeedsremoved_flat[hght_inds] = vel_flat[hght_inds] - vel_bins[vel_max_ind[0]]
 
 
         cfad = np.ma.masked_where(vel_cfad==0.00, vel_cfad)
         [X, Y] = np.meshgrid(vel_bins[:-1]+np.diff(vel_bins)/2, alt_bins[:-1]+np.diff(alt_bins)/2)
 
-        return [cfad, X, Y]
+        vel_corrected = np.reshape(vel_fallspeedsremoved_flat, vel[:,:].values.shape)
+
+        return [cfad, X, Y, vel_corrected]
 
         
 
