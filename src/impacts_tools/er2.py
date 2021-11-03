@@ -152,10 +152,14 @@ class Radar(ABC):
         cfad : [data, X, Y] 
             The calculated velocity frequency as well as the X, Y meshgrid to plot it on
         """
-        if vel_bins == None:
+        if type(vel_bins) == np.ndarray:
+            pass
+        else:
             vel_bins = np.linspace(-5., 5., num=101)
 
-        if alt_bins == None:
+        if type(alt_bins) == np.ndarray:
+            pass
+        else:
             alt_bins = np.linspace(100., 10000., num=45)
 
         if band is not None:
