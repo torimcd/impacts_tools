@@ -37,7 +37,7 @@ class Er2(object):
 
     """
 
-    def __init__(self, date, filepath):
+    def __init__(self, filepath, date):
         """
        Parameters
         ----------
