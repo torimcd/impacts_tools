@@ -3,6 +3,8 @@ Classes for IMPACTS P3 Instruments
 """
 import xarray as xr
 import numpy as np
+from pyproj import Proj
+from scipy.spatial import cKDTree
 from datetime import datetime, timedelta
 
 class P3(object):
@@ -72,6 +74,9 @@ class P3(object):
 
         
         Attribute Information:
+            PI_CONTACT_INFO, Platform, LOCATION, ASSOCIATED_DATA, INSTRUMENT_INFO, DATA_INFO, UNCERTAINTY, 
+            ULOD_FLAG, ULOD_VALUE, LLOD_FLAG, LLOD_VALUE, DM_CONTACT_INFO, PROJECT_INFO, STIPULATIONS_ON_USE, 
+            OTHER_COMMENTS, REVISION, R0
         
         """
 
@@ -176,8 +181,7 @@ class P3(object):
             readfile[name][readfile[name]==VMISS[jj]] = np.nan
 
 
-        time = np.datetime64(datestr) + np.timedelta64(int(readfile['time'][i]), 's') for i in
-                                     range(len(readfile['time']))])
+        time = np.array([np.datetime64(datestr) + np.timedelta64(int(readfile['time'][i]), 's') for i in range(len(readfile['time']))])
         
         attrs = {}
         instrum_info_counter = 1
@@ -245,7 +249,7 @@ class P3(object):
         else:
             end_dt64 = np.datetime64(end_time)
 
-        if tres>1:
+        if resolution>1:
             iwg_avg = {}
             iwg_avg['Information'] = self.data.attrs
 
@@ -255,39 +259,38 @@ class P3(object):
             for var in self.data.data_vars:
                 if (var!='Information') and (var!='time'):
                     iwg_avg[var] = {}
-                    iwg_avg[var]['data'] = np.zeros(int(dur/tres))
+                    iwg_avg[var]['data'] = np.zeros(int(dur/resolution))
                     iwg_avg[var]['units'] = self.data[var].attrs['units']
 
             time_subset_begin = start_dt64 # allocate time array of N-sec interval obs
             # get midpoint of N-second interval
-            time_subset_mid = start_dt64 + np.timedelta64(int(tres/2.), 's') + np.timedelta64(int(np.mod(tres/2., 1)*1000.), 'ms')
+            time_subset_mid = start_dt64 + np.timedelta64(int(resolution/2.), 's') + np.timedelta64(int(np.mod(resolution/2., 1)*1000.), 'ms')
             curr_time = start_dt64
             i = 0
 
             while curr_time<end_dt64:
                 if curr_time>start_dt64:
                     time_subset_begin = np.append(time_subset_begin, curr_time)
-                    time_subset_mid = np.append(time_subset_mid, curr_time + np.timedelta64(int(tres/2.), 's') +
-                                            np.timedelta64(int(np.mod(tres/2., 1)*1000.), 'ms'))
+                    time_subset_mid = np.append(time_subset_mid, curr_time + np.timedelta64(int(resolution/2.), 's') +
+                                            np.timedelta64(int(np.mod(resolution/2., 1)*1000.), 'ms'))
                 time_inds = np.where((self.data['time']>=curr_time) &
-                                 (self.data['time']<curr_time+np.timedelta64(int(tres), 's')))[0]
+                                 (self.data['time']<curr_time+np.timedelta64(int(resolution), 's')))[0]
 
                 for var in iwg_avg.keys(): # loop through variables
                     if (var=='Latitude') or (var=='Longitude') or (var=='GPS_Altitude') or (var=='Pressure_Altitude'): # these require special interpolation about the time midpoint
-                        times = np.arange(int(tres))
+                        times = np.arange(int(resolution))
                         coord_array = self.data[var][time_inds]
-                        iwg_avg[var]['data'][i] = np.interp(tres/2., times, coord_array)
+                        iwg_avg[var]['data'][i] = np.interp(resolution/2., times, coord_array)
                     elif (var!='Information') and (var!='time'): # do a simple mean for all other variables
                         var_array = self.data[var][time_inds]
                         iwg_avg[var]['data'][i] = np.mean(var_array)
                 i += 1
-                curr_time += np.timedelta64(int(tres), 's')
+                curr_time += np.timedelta64(int(resolution), 's')
 
             iwg_avg['time'] = {}; iwg_avg['time_midpoint'] = {}
             iwg_avg['time']['data'] = time_subset_begin
-            iwg_avg['time']['units'] = 'Start of {}-second period as numpy datetime64 object'.format(str(int(tres)))
+            iwg_avg['time']['units'] = 'Start of {}-second period as numpy datetime64 object'.format(str(int(resolution)))
             iwg_avg['time_midpoint']['data'] = time_subset_mid
-            iwg_avg['time_midpoint']['units'] = 'Middle of {}-second period as numpy datetime64 object'.format(str(int(tres)))
+            iwg_avg['time_midpoint']['units'] = 'Middle of {}-second period as numpy datetime64 object'.format(str(int(resolution)))
 
             return iwg_avg
-
