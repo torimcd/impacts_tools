@@ -103,6 +103,7 @@ class P3(object):
 
         f = open(filepath, 'r')
 
+        # NLHEAD is Number of header lines, FFI is NASA AMES FFI format number
         NLHEAD, FFI = f.readline().rstrip('\n').split(',')
         
         # Check that the file is indeed NASA AMES 1001
@@ -111,39 +112,47 @@ class P3(object):
             return
 
 
-        ONAME = f.readline().rstrip('\n')
-        ORG = f.readline().rstrip('\n')
-        SNAME = f.readline().rstrip('\n')
-        MNAME = f.readline().rstrip('\n')
-        IVOL, NVOL = f.readline().rstrip('\n').split(',')
+        ONAME = f.readline().rstrip('\n')   # Originator/PI Name
+        ORG = f.readline().rstrip('\n')     # Name of organization
+        SNAME = f.readline().rstrip('\n')   # Instrument/platform name
+        MNAME = f.readline().rstrip('\n')   # Project/mission name
+        IVOL, NVOL = f.readline().rstrip('\n').split(',')   # IVOL is Current volume number (almost always 1), NVOL is Number of volumes for data (almost always 1)
+        
         yy1, mm1, dd1, yy2, mm2, dd2 = f.readline().split(',')
         datestr = yy1 + '-' + mm1 + '-' + dd1
-        DATE = (int(yy1), int(mm1), int(dd1))
-        RDATE = (int(yy2), int(mm2), int(dd2))
-        DX = f.readline().rstrip('\n')
-        XNAME = f.readline().rstrip('\n')
-        NV = int(f.readline().rstrip('\n'))
+        DATE = (int(yy1), int(mm1), int(dd1))   # YYYY MM DD UTC begin date
+        RDATE = (int(yy2), int(mm2), int(dd2))  # Reduction/revision UTC date 
+        
+        DX = f.readline().rstrip('\n')          # Interval between successive values (data rate)
+        XNAME = f.readline().rstrip('\n')       # Name/Description of DX variable above
+        NV = int(f.readline().rstrip('\n'))     # Number of primary variables in file
+        
         _vscl = f.readline().split(',')
-        VSCAL = [float(x) for x in _vscl]
+        VSCAL = [float(x) for x in _vscl]       # Scaling factor for each variable column
+        
         _vmiss = f.readline().split(',')
-        VMISS = [float(x) for x in _vmiss]
-        VNAME = ['time']
-        VUNIT = ['seconds since ' + datestr]
-    
+        VMISS = [float(x) for x in _vmiss]      # Missing value for each variable column
+        
+        VNAME = ['time']     # Name of first variable
+        VUNIT = ['seconds since ' + datestr]    # Units of first variable
+
+        # unpack the variable names and units    
         for nvar in range(NV):
             line_buffer = f.readline().rstrip('\n').split(',', 1)
             VNAME.append(line_buffer[0])
             VUNIT.append(line_buffer[1][1:])
         
-        NSCOML = int(f.readline().rstrip('\n'))
-        SCOM = []
+        NSCOML = int(f.readline().rstrip('\n'))  # Number of special comment lines within header
+        SCOM = []       # Special comments about file/data, etc.
         
+        # unpack the special comments
         for nscom in range(NSCOML):
             SCOM.append(f.readline().rstrip('\n'))
         
-        NNCOML = int(f.readline().rstrip('\n'))
-        NCOM = []
+        NNCOML = int(f.readline().rstrip('\n')) # Number of normal comment lines within header
+        NCOM = []       # Normal comments
     
+        # unpack the normal comments
         for nncom in range(NNCOML):
             NCOM.append(f.readline().rstrip('\n'))
     
@@ -151,6 +160,7 @@ class P3(object):
         VSCAL.insert(0, 1)
         VMISS.insert(0, np.nan)
 
+        # close the nav file
         f.close()
 
         junk = np.genfromtxt(filepath, delimiter=',', skip_header=int(NLHEAD),
