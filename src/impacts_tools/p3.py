@@ -4,12 +4,122 @@ Classes for IMPACTS P3 Instruments
 import xarray as xr
 import numpy as np
 from pyproj import Proj
+from abc import ABC, abstractmethod
 from scipy.spatial import cKDTree
 from datetime import datetime, timedelta
 
-class P3(object):
+class Common(ABC):
+    """ A class to represent all of the functionality common between the P3 aircraft and instruments
+        during the IMPACTS field campaign.
+
+    Parameters
+    ----------
+    data : xarray.Dataset()
+        Instrument data and attributes
+
     """
-    A class to represent the P3 aircraft during the IMPACTS field campaign
+
+    @abstractmethod     # this stops you from being able to make a new generic Common() objecy
+    def __init__(self):
+        """
+        This is an abstract method since only inherited classes will be used to instantiate Common objects.
+        """
+        self.name = None
+        self.data = None
+
+    @abstractmethod
+    def readfile(self, filepath):
+        """
+        This is an abstract method since only inherited classes will be used to read data into objects.
+        """
+        pass
+
+    def get_ames_header(self, filepath):
+        """
+        Reads the header information from the AMES FFI formatted data file.
+
+        Parameters
+        ----------
+        filepath : str
+            The path to the data file
+
+        Returns
+        -------
+        header : dictionary
+            The data file header information
+        """
+
+        header = {}
+
+        # start by processing the nav file header information
+        f = open(filepath, 'r')
+
+        # NLHEAD is Number of header lines, FFI is NASA AMES FFI format number
+        header['NLHEAD'], header['FFI'] = f.readline().rstrip('\n').split(',')
+        
+        # Check that the file is indeed NASA AMES 1001
+        if header['FFI'].replace(' ', '') != '1001':
+            print("Check file type, looks like it's not FFI 1001")
+            return
+
+
+        header['ONAME'] = f.readline().rstrip('\n')   # Originator/PI Name
+        header['ORG'] = f.readline().rstrip('\n')     # Name of organization
+        header['SNAME'] = f.readline().rstrip('\n')   # Instrument/platform name
+        header['MNAME'] = f.readline().rstrip('\n')   # Project/mission name
+        header['IVOL'], header['NVOL'] = f.readline().rstrip('\n').split(',')   # IVOL is Current volume number (almost always 1), NVOL is Number of volumes for data (almost always 1)
+        
+        yy1, mm1, dd1, yy2, mm2, dd2 = f.readline().split(',')
+        datestr = yy1 + '-' + mm1 + '-' + dd1
+        header['datestr'] = datestr
+        header['DATE'] = (int(yy1), int(mm1), int(dd1))   # YYYY MM DD UTC begin date
+        header['RDATE'] = (int(yy2), int(mm2), int(dd2))  # Reduction/revision UTC date 
+        
+        header['DX'] = f.readline().rstrip('\n')          # Interval between successive values (data rate)
+        header['XNAME'] = f.readline().rstrip('\n')       # Name/Description of DX variable above
+        header['NV'] = int(f.readline().rstrip('\n'))     # Number of primary variables in file
+        
+        _vscl = f.readline().split(',')
+        header['VSCAL'] = [float(x) for x in _vscl]       # Scaling factor for each variable column
+        
+        _vmiss = f.readline().split(',')
+        header['VMISS'] = [float(x) for x in _vmiss]      # Missing value for each variable column
+        
+        header['VNAME'] = ['time']     # Name of first variable
+        header['VUNIT'] = ['seconds since ' + datestr]    # Units of first variable
+
+        # unpack the variable names and units    
+        for nvar in range(NV):
+            line_buffer = f.readline().rstrip('\n').split(',', 1)
+            header['VNAME'].append(line_buffer[0])
+            header['VUNIT'].append(line_buffer[1][1:])
+        
+        header['NSCOML'] = int(f.readline().rstrip('\n'))  # Number of special comment lines within header
+        header['SCOM'] = []       # Special comments about file/data, etc.
+        
+        # unpack the special comments
+        for nscom in range(header['NSCOML']):
+            header['SCOM'].append(f.readline().rstrip('\n'))
+        
+        header['NNCOML'] = int(f.readline().rstrip('\n')) # Number of normal comment lines within header
+        header['NCOM'] = []       # Normal comments
+    
+        # unpack the normal comments
+        for nncom in range(header['NNCOML']):
+            header['NCOM'].append(f.readline().rstrip('\n'))
+    
+        # Insert elements to account for time column
+        header['VSCAL'].insert(0, 1)
+        header['VMISS'].insert(0, np.nan)
+
+        # close the nav file - we're done with the header
+        f.close()
+
+        return header
+
+class P3(Common):
+    """
+    A class to represent the P3 aircraft during the IMPACTS field campaign. Inherits from Common()
     
     Parameters
     ----------
@@ -101,98 +211,37 @@ class P3(object):
             The unpacked dataset
         """
 
-        f = open(filepath, 'r')
+        # parse the header information
+        header = self.get_ames_header(filepath)
 
-        # NLHEAD is Number of header lines, FFI is NASA AMES FFI format number
-        NLHEAD, FFI = f.readline().rstrip('\n').split(',')
-        
-        # Check that the file is indeed NASA AMES 1001
-        if FFI.replace(' ', '') != '1001':
-            print("Check file type, looks like it's not FFI 1001")
-            return
-
-
-        ONAME = f.readline().rstrip('\n')   # Originator/PI Name
-        ORG = f.readline().rstrip('\n')     # Name of organization
-        SNAME = f.readline().rstrip('\n')   # Instrument/platform name
-        MNAME = f.readline().rstrip('\n')   # Project/mission name
-        IVOL, NVOL = f.readline().rstrip('\n').split(',')   # IVOL is Current volume number (almost always 1), NVOL is Number of volumes for data (almost always 1)
-        
-        yy1, mm1, dd1, yy2, mm2, dd2 = f.readline().split(',')
-        datestr = yy1 + '-' + mm1 + '-' + dd1
-        DATE = (int(yy1), int(mm1), int(dd1))   # YYYY MM DD UTC begin date
-        RDATE = (int(yy2), int(mm2), int(dd2))  # Reduction/revision UTC date 
-        
-        DX = f.readline().rstrip('\n')          # Interval between successive values (data rate)
-        XNAME = f.readline().rstrip('\n')       # Name/Description of DX variable above
-        NV = int(f.readline().rstrip('\n'))     # Number of primary variables in file
-        
-        _vscl = f.readline().split(',')
-        VSCAL = [float(x) for x in _vscl]       # Scaling factor for each variable column
-        
-        _vmiss = f.readline().split(',')
-        VMISS = [float(x) for x in _vmiss]      # Missing value for each variable column
-        
-        VNAME = ['time']     # Name of first variable
-        VUNIT = ['seconds since ' + datestr]    # Units of first variable
-
-        # unpack the variable names and units    
-        for nvar in range(NV):
-            line_buffer = f.readline().rstrip('\n').split(',', 1)
-            VNAME.append(line_buffer[0])
-            VUNIT.append(line_buffer[1][1:])
-        
-        NSCOML = int(f.readline().rstrip('\n'))  # Number of special comment lines within header
-        SCOM = []       # Special comments about file/data, etc.
-        
-        # unpack the special comments
-        for nscom in range(NSCOML):
-            SCOM.append(f.readline().rstrip('\n'))
-        
-        NNCOML = int(f.readline().rstrip('\n')) # Number of normal comment lines within header
-        NCOM = []       # Normal comments
-    
-        # unpack the normal comments
-        for nncom in range(NNCOML):
-            NCOM.append(f.readline().rstrip('\n'))
-    
-        # Insert elements to account for time column
-        VSCAL.insert(0, 1)
-        VMISS.insert(0, np.nan)
-
-        # close the nav file
-        f.close()
-
-        junk = np.genfromtxt(filepath, delimiter=',', skip_header=int(NLHEAD),
-                         missing_values=VMISS, usemask=True,
+        # read the actual data values from the nav file
+        data = np.genfromtxt(filepath, delimiter=',', skip_header=int(header['NLHEAD']),
+                         missing_values=header['VMISS'], usemask=True,
                          filling_values=np.nan)
-        
-
 
         readfile = {}
-        if len(VNAME) != len(VSCAL):
+        if len(header['VNAME']) != len(header['VSCAL']):
             print("ALL variables must be read in this type of file, "
               "please check name_map to make sure it is the "
               "correct length.")
 
 
-        for jj, name in enumerate(VNAME):
+        for jj, name in enumerate(header['VNAME']):
             if name=='True_Air_Speed' or name=='Indicated_Air_Speed' or name=='Mach_Number':
-                VMISS[jj] = -8888.
-            if name=='True_Air_Speed' and VUNIT[jj]=='kts': # change TAS to m/s
-                VSCAL[jj] = 0.51
-                VUNIT[jj] = 'm/s'
-            readfile[name] = np.array(junk[:, jj] * VSCAL[jj])
+                header['VMISS'][jj] = -8888.
+            if name=='True_Air_Speed' and header['VUNIT'][jj]=='kts': # change TAS to m/s
+                header['VSCAL'][jj] = 0.51
+                header['VUNIT'][jj] = 'm/s'
+            readfile[name] = np.array(data[:, jj] * header['VSCAL'][jj])
             # Turn missing values to nan
-            readfile[name][readfile[name]==VMISS[jj]] = np.nan
+            readfile[name][readfile[name]==header['VMISS'][jj]] = np.nan
 
-        print(readfile)
 
-        time = np.array([np.datetime64(datestr) + np.timedelta64(int(readfile['time'][i]), 's') for i in range(len(readfile['time']))])
+        time = np.array([np.datetime64(header['datestr']) + np.timedelta64(int(readfile['time'][i]), 's') for i in range(len(readfile['time']))])
         
         attrs = {}
         instrum_info_counter = 1
-        for ii, comment in enumerate(NCOM[:-1]): # add global attributes
+        for ii, comment in enumerate(header['NCOM'][:-1]): # add global attributes
             parsed_comment = comment.split(':')
             if len(parsed_comment) > 1:
                 attrs[parsed_comment[0]] = parsed_comment[1][1:]
@@ -202,7 +251,7 @@ class P3(object):
                     'INSTRUMENT_INFO_'+str(instrum_info_counter)] = parsed_comment[0][1:]
 
         data_vars = {}
-        for jj, name in enumerate(VNAME[2:]):
+        for jj, name in enumerate(header['VNAME'][2:]):
             da = xr.DataArray(
                 data = readfile[name],
                 dims = ['time'],
@@ -210,7 +259,7 @@ class P3(object):
                     time = time),
                 attrs = dict(
                     description=name,
-                    units = VUNIT[jj+2][:]
+                    units = header['VUNIT'][jj+2][:]
                 )
             )
             data_vars[name] = da
@@ -301,3 +350,62 @@ class P3(object):
             iwg_avg['time_midpoint']['units'] = 'Middle of {}-second period as numpy datetime64 object'.format(str(int(resolution)))
 
             return iwg_avg
+
+
+class TAMMS(object):
+    """
+    A class to represent the Turbulent Air Motion Measurement System (TAMMS) instrument during the IMPACTS field campaign
+    
+    Parameters
+    ----------
+    filepath : str
+        File path to the TAMMS instrument data file
+    start_time : np.datetime64 or None
+        The initial time of interest eg. if looking at a single flight leg
+    end_time : np.datetime64 or None
+        The final time of interest eg. if looking at a single flight leg
+    """
+
+    def __init__(self, filepath, start_time=None, end_time=None):
+        self.name = 'TAMMS'
+
+        # read the raw data
+        self.data = self.readfile(filepath, start_time, end_time)
+        """
+        xarray.Dataset of TAMMS variables and attributes
+
+        Dimensions:
+            - time: np.array(np.datetime64[ns]) - The UTC time stamp
+
+        Coordinates:
+            - time (time): np.array(np.datetime64[ns]) - The UTC time stamp  
+
+        Variables:
+    
+
+        Attribute Information:
+        
+        """
+
+
+    def readfile(self, filepath, start_time=None, end_time=None):
+        """
+        Reads the TAMMS data file and upacks the fields into an xarray.Dataset.
+        This assumes the nav file is in NASA Ames FFI format (http://cedadocs.ceda.ac.uk/73/4/FFI-summary.html)
+        
+        Parameters
+        ----------
+        filepath : str
+            Path to the data file
+        start_time : np.datetime64 or None
+            The initial time of interest
+        end_time : np.datetime64 or None
+            The final time of interest
+
+        Returns
+        -------
+        ds : xarray.Dataset
+            The unpacked dataset
+        """
+
+        return ds
