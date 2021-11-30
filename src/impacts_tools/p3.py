@@ -167,18 +167,14 @@ class P3(object):
                          missing_values=VMISS, usemask=True,
                          filling_values=np.nan)
         
-        # Get list of variable names
-        name_map = {}
-        for var in VNAME:
-            name_map[var] = var
+
 
         readfile = {}
         if len(VNAME) != len(VSCAL):
             print("ALL variables must be read in this type of file, "
               "please check name_map to make sure it is the "
               "correct length.")
-        for jj, unit in enumerate(VUNIT):
-            VUNIT[jj] = unit.split(',')[0]
+
 
         for jj, name in enumerate(VNAME):
             if name=='True_Air_Speed' or name=='Indicated_Air_Speed' or name=='Mach_Number':
@@ -190,6 +186,7 @@ class P3(object):
             # Turn missing values to nan
             readfile[name][readfile[name]==VMISS[jj]] = np.nan
 
+        print(readfile)
 
         time = np.array([np.datetime64(datestr) + np.timedelta64(int(readfile['time'][i]), 's') for i in range(len(readfile['time']))])
         
