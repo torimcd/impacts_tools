@@ -89,7 +89,7 @@ class Common(ABC):
         header['VUNIT'] = ['seconds since ' + datestr]    # Units of first variable
 
         # unpack the variable names and units    
-        for nvar in range(NV):
+        for nvar in range(header['NV']):
             line_buffer = f.readline().rstrip('\n').split(',', 1)
             header['VNAME'].append(line_buffer[0])
             header['VUNIT'].append(line_buffer[1][1:])
@@ -184,7 +184,7 @@ class P3(Common):
 
         
         Attribute Information:
-            PI_CONTACT_INFO, Platform, LOCATION, ASSOCIATED_DATA, INSTRUMENT_INFO, DATA_INFO, UNCERTAINTY, 
+            PI_CONTACT_INFO, PLATFORM, LOCATION, ASSOCIATED_DATA, INSTRUMENT_INFO, DATA_INFO, UNCERTAINTY, 
             ULOD_FLAG, ULOD_VALUE, LLOD_FLAG, LLOD_VALUE, DM_CONTACT_INFO, PROJECT_INFO, STIPULATIONS_ON_USE, 
             OTHER_COMMENTS, REVISION, R0
         
@@ -352,7 +352,7 @@ class P3(Common):
             return iwg_avg
 
 
-class TAMMS(object):
+class TAMMS(Common):
     """
     A class to represent the Turbulent Air Motion Measurement System (TAMMS) instrument during the IMPACTS field campaign
     
@@ -381,10 +381,22 @@ class TAMMS(object):
             - time (time): np.array(np.datetime64[ns]) - The UTC time stamp  
 
         Variables:
-    
+            - Latitude_deg (time) : float64 - Latitude of the instrument platform in degrees
+            - Longitude_deg (time) : float64 - Longitude of the instrument platform in degrees
+            - PALT_ft (time) : float64 - Altitude of the instrument platform in feet
+            - Pitch_deg (time) : float64 - Pitch angle of the instrument platform in degrees
+            - Roll_deg (time) : float64 - Roll angle of the instrument platform in degrees
+            - Tstat_degC (time) : float64 - Static pressure in degrees Celcius
+            - WSPD_ms-1 (time) : float64 - Wind speed (m/s)
+            - WDIR_deg (time) : float64 - Wind direction (degrees)
+            - u_ms-1 (time) : float64 - Zonal wind speed (m/s)
+            - v_ms-1 (time) : float64 - Meridional wind speed (m/s)
+            - w_ms-1 (time) : float64 - Vertical wind speed (m/s)
 
         Attribute Information:
-        
+            PI_CONTACT_INFO, PLATFORM, LOCATION, ASSOCIATED_DATA, INSTRUMENT_INFO, DATA_INFO, UNCERTAINTY, 
+            ULOD_FLAG, ULOD_VALUE, LLOD_FLAG, LLOD_VALUE, DM_CONTACT_INFO, PROJECT_INFO, STIPULATIONS_ON_USE, 
+            OTHER_COMMENTS, REVISION, R0
         """
 
 
@@ -407,5 +419,69 @@ class TAMMS(object):
         ds : xarray.Dataset
             The unpacked dataset
         """
+
+        # parse header information
+        header = self.get_ames_header(filepath)
+
+        # read the data
+        data = np.genfromtxt(filepath, delimiter=',', skip_header=int(header['NLHEAD']),
+                         missing_values=header['VMISS'], usemask=True, filling_values=np.nan)
+
+        readfile = {}
+        if len(header['VNAME']) != len(header['VSCAL']):
+            print("ALL variables must be read in this type of file, "
+              "please check name_map to make sure it is the "
+              "correct length.")
+
+
+        for jj, name in enumerate(header['VNAME']):
+            if name=='True_Air_Speed' or name=='Indicated_Air_Speed' or name=='Mach_Number':
+                header['VMISS'][jj] = -8888.
+            if name=='True_Air_Speed' and header['VUNIT'][jj]=='kts': # change TAS to m/s
+                header['VSCAL'][jj] = 0.51
+                header['VUNIT'][jj] = 'm/s'
+            readfile[name] = np.array(data[:, jj] * header['VSCAL'][jj])
+            # Turn missing values to nan
+            readfile[name][readfile[name]==header['VMISS'][jj]] = np.nan
+
+
+        time_dt64 = np.array([np.datetime64(header['datestr']) + np.timedelta64(int(readfile['time'][i]), 's') for i in range(len(readfile['time']))])
+        
+        if start_time is not None:
+            time_inds = np.where((time_dt64>=start_time) & (time_dt64<=end_time))[0]
+        else:
+            time_inds = np.where((time_dt64 != None))[0]
+
+        # organize the attributes for the DataSet
+        attrs = {}
+        for ii, comment in enumerate(header['NCOM'][:-1]): # add global attributes
+            parsed_comment = comment.split(':')
+            if len(parsed_comment) > 1:
+                attrs[parsed_comment[0]] = parsed_comment[1][1:]
+
+        # put variables into DataArray objects
+        data_vars = {}
+        for jj, name in enumerate(header['VNAME'][1:]):
+            da = xr.DataArray(
+                data = readfile[name],
+                dims = ['time'],
+                coords = dict(
+                    time = time_dt64),
+                attrs = dict(
+                    description=name,
+                    units = header['VUNIT'][jj+1][:]
+                )
+            )
+            data_vars[name] = da[time_inds]
+
+
+        # populate the DataSet object with prepared variables and attributes
+        ds = xr.Dataset(
+            data_vars = data_vars,
+            coords = {
+                "time": time_dt64[time_inds]
+            },
+            attrs = attrs
+        )
 
         return ds
