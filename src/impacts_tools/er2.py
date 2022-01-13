@@ -2099,6 +2099,11 @@ class VAD(object):
         time_dt = [julian.from_jd(time_raw[i], fmt='jd') for i in range(len(time_raw))] # Python datetime object
         time_dt64 = np.array(time_dt, dtype='datetime64[ms]') # Numpy datetime64 object (e.g., for plotting)
 
+        if start_time is not None:
+            time_inds = np.where((time_dt64>=start_time) & (time_dt64<=end_time))[0]
+        else:
+            time_inds = np.where((time_dt64 != None))[0]
+
         radar_range = vad['range'].values
 
         yt = xr.DataArray(
@@ -2683,54 +2688,54 @@ class VAD(object):
 
         ds = xr.Dataset(
             data_vars= {
-                "npoints_valid": npoints_valid,
-                "npoints_total": npoints_total,
-                "elapsed_time": elapsed_time,
-                "yt": yt,
-                "zt": zt,
-                "uvel": uvel,
-                "vvel": vvel,
-                "avel": avel,
-                "xvel": xvel,
-                "dshr": dshr,
-                "dstr": dstr,
-                "refl": refl,
-                "refl_max": refl_max,
-                "refl_std": refl_std,
-                "footprint_time": footprint_time,
-                "delta_time": delta_time,
-                "delta_time_std": delta_time_std,
-                "delta_azimuth": delta_azimuth,
-                "delta_azimuth_std": delta_azimuth_std,
-                "er2_altitude": er2_altitude,
-                "er2_altitude_std":er2_altitude_std,
-                "er2_heading": er2_heading,
-                "er2_heading_std": er2_heading_std,
-                "er2_pitch": er2_pitch,
-                "er2_pitch_std": er2_pitch_std,
-                "er2_roll": er2_roll,
-                "er2_roll_std": er2_roll_std,
-                "er2_groundspeed": er2_groundspeed,
-                "er2_groundspeed_std": er2_groundspeed_std,
-                "er2_track": er2_track,
-                "er2_track_std": er2_track_std,
-                "vertical_resolution": vertical_resolution,
-                "antenna_rotdir": antenna_rotdir,
-                "cor": cor,
-                "qc1": qc1,
-                "qc2": qc2,
-                "qc3": qc3,
-                "qc4": qc4,
-                "qc5": qc5
+                "npoints_valid": npoints_valid[:,time_inds],
+                "npoints_total": npoints_total[:,time_inds],
+                "elapsed_time": elapsed_time[time_inds],
+                "yt": yt[time_inds],
+                "zt": zt[:,time_inds],
+                "uvel": uvel[:,time_inds],
+                "vvel": vvel[:,time_inds],
+                "avel": avel[:,time_inds],
+                "xvel": xvel[:,time_inds],
+                "dshr": dshr[:,time_inds],
+                "dstr": dstr[:,time_inds],
+                "refl": refl[:,time_inds],
+                "refl_max": refl_max[:,time_inds],
+                "refl_std": refl_std[:,time_inds],
+                "footprint_time": footprint_time[:,time_inds],
+                "delta_time": delta_time[time_inds],
+                "delta_time_std": delta_time_std[time_inds],
+                "delta_azimuth": delta_azimuth[time_inds],
+                "delta_azimuth_std": delta_azimuth_std[time_inds],
+                "er2_altitude": er2_altitude[time_inds],
+                "er2_altitude_std":er2_altitude_std[time_inds],
+                "er2_heading": er2_heading[time_inds],
+                "er2_heading_std": er2_heading_std[time_inds],
+                "er2_pitch": er2_pitch[time_inds],
+                "er2_pitch_std": er2_pitch_std[time_inds],
+                "er2_roll": er2_roll[time_inds],
+                "er2_roll_std": er2_roll_std[time_inds],
+                "er2_groundspeed": er2_groundspeed[time_inds],
+                "er2_groundspeed_std": er2_groundspeed_std[time_inds],
+                "er2_track": er2_track[time_inds],
+                "er2_track_std": er2_track_std[time_inds],
+                "vertical_resolution": vertical_resolution[:],
+                "antenna_rotdir": antenna_rotdir[time_inds],
+                "cor": cor[:,time_inds],
+                "qc1": qc1[:,time_inds],
+                "qc2": qc2[:,time_inds],
+                "qc3": qc3[:,time_inds],
+                "qc4": qc4[:,time_inds],
+                "qc5": qc5[:,time_inds]
             },
 
             coords={
                 "range": radar_range,
                 "height": height,
-                "time": time_dt64,
-                "lon": lon,
-                "lat": lat,
-                "distance": yt
+                "time": time_dt64[time_inds],
+                "lon": lon[time_inds],
+                "lat": lat[time_inds],
+                "distance": yt[time_inds]
             },
 
             attrs = vad.attrs

@@ -157,7 +157,7 @@ class P3(Common):
             - True_Air_Speed (time) : 
             - Indicated_Air_Speed (time) : 
             - Mach_Number (time) : 
-            - Vertical_Spped (time) : 
+            - Vertical_Speed (time) : 
             - True_Heading (time) : 
             - Track_Angle (time) : 
             - Drift_Angle (time) : 
