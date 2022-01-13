@@ -2358,6 +2358,85 @@ class VAD(object):
                 description=vad['cor'].long_name
             ) 
         )
+        c0 = xr.DataArray(
+            data = vad['c0'].values,
+            dims = ["range","time"],
+            coords = dict(
+                range = radar_range,
+                time = time_dt64,
+                distance = yt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description=vad['c0'].long_name
+            ) 
+        )
+        c1 = xr.DataArray(
+            data = vad['c1'].values,
+            dims = ["range","time"],
+            coords = dict(
+                range = radar_range,
+                time = time_dt64,
+                distance = yt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description=vad['c1'].long_name
+            ) 
+        )
+        c2 = xr.DataArray(
+            data = vad['c2'].values,
+            dims = ["range","time"],
+            coords = dict(
+                range = radar_range,
+                time = time_dt64,
+                distance = yt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description=vad['c2'].long_name
+            ) 
+        )
+        d1 = xr.DataArray(
+            data = vad['d1'].values,
+            dims = ["range","time"],
+            coords = dict(
+                range = radar_range,
+                time = time_dt64,
+                distance = yt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description=vad['d1'].long_name
+            ) 
+        )
+        d2 = xr.DataArray(
+            data = vad['d2'].values,
+            dims = ["range","time"],
+            coords = dict(
+                range = radar_range,
+                time = time_dt64,
+                distance = yt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description=vad['d2'].long_name
+            ) 
+        )
+        azhist = xr.DataArray(
+            data = vad['cor'].values,
+            dims = ["bins", "range","time"],
+            coords = dict(
+                bins=12,
+                range = radar_range,
+                time = time_dt64,
+                distance = yt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description=vad['cor'].long_name
+            ) 
+        )
         qc1 = xr.DataArray(
             data = vad['qc1'].values,
             dims = ["range","time"],
@@ -2708,6 +2787,12 @@ class VAD(object):
                 "vertical_resolution": vertical_resolution,
                 "antenna_rotdir": antenna_rotdir,
                 "cor": cor,
+                "c0": c0,
+                "c1": c1,
+                "c2": c2,
+                "d1": d1,
+                "d2": d2,
+                "azhist": azhist,
                 "qc1": qc1,
                 "qc2": qc2,
                 "qc3": qc3,
@@ -2716,6 +2801,7 @@ class VAD(object):
             },
 
             coords={
+                "bins": 12,
                 "range": radar_range,
                 "height": height,
                 "time": time_dt64,
