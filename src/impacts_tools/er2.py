@@ -2092,6 +2092,8 @@ class VAD(object):
 
         radar_range = vad['range'].values
 
+        histbins=vad['histdim'].values
+
         yt = xr.DataArray(
             data = vad['yt'].values,
             dims=["time"],
@@ -2423,18 +2425,18 @@ class VAD(object):
                 description=vad['d2'].long_name
             ) 
         )
-        azhist = xr.DataArray(
-            data = vad['cor'].values,
+        azihist = xr.DataArray(
+            data = vad['azihist'].values,
             dims = ["bins", "range","time"],
             coords = dict(
-                bins=12,
+                bins=histbins,
                 range = radar_range,
                 time = time_dt64,
                 distance = yt,
                 lat = lat,
                 lon = lon),
             attrs = dict(
-                description=vad['cor'].long_name
+                description=vad['azihist'].long_name
             ) 
         )
         qc1 = xr.DataArray(
@@ -2792,7 +2794,7 @@ class VAD(object):
                 "c2": c2,
                 "d1": d1,
                 "d2": d2,
-                "azhist": azhist,
+                "azihist": azihist,
                 "qc1": qc1,
                 "qc2": qc2,
                 "qc3": qc3,
