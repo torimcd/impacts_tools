@@ -2358,6 +2358,7 @@ class VAD(object):
                 description=vad['cor'].long_name
             ) 
         )
+        print(vad)
         c0 = xr.DataArray(
             data = vad['c0'].values,
             dims = ["range","time"],
@@ -2424,7 +2425,7 @@ class VAD(object):
             ) 
         )
         azhist = xr.DataArray(
-            data = vad['cor'].values,
+            data = vad['azihist'].values,
             dims = ["bins", "range","time"],
             coords = dict(
                 bins=12,
@@ -2434,7 +2435,7 @@ class VAD(object):
                 lat = lat,
                 lon = lon),
             attrs = dict(
-                description=vad['cor'].long_name
+                description=vad['azihist'].long_name
             ) 
         )
         qc1 = xr.DataArray(
