@@ -2127,7 +2127,7 @@ class VAD(object):
         )
 
         height = xr.DataArray(
-            data = vad['hght'][:,100].values,
+            data = vad['hght'].values,
             dims=["range", "time"],
             coords = dict(
                 range = radar_range,
@@ -2372,7 +2372,6 @@ class VAD(object):
                 description=vad['cor'].long_name
             ) 
         )
-        print(vad)
         c0 = xr.DataArray(
             data = vad['c0'].values,
             dims = ["range","time"],
