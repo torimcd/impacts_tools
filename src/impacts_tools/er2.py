@@ -2343,6 +2343,37 @@ class VAD(object):
                 units=vad['refl_std'].units
             ) 
         )
+        footprint_maxdim = xr.DataArray(
+            data = vad['footprint_maxdim'].values,
+            dims = ["vector3d","range","time"],
+            coords = dict(
+                range = radar_range,
+                time = time_dt64,
+                height = height,
+                distance = yt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description=vad['footprint_maxdim'].long_name,
+                units=vad['footprint_maxdim'].units
+            ) 
+        )
+
+        footprint_maxdim_center = xr.DataArray(
+            data = vad['footprint_maxdim_center'].values,
+            dims = ["vector3d","range","time"],
+            coords = dict(
+                range = radar_range,
+                time = time_dt64,
+                height = height,
+                distance = yt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description=vad['footprint_maxdim_center'].long_name,
+                units=vad['footprint_maxdim_center'].units
+            ) 
+        )
 
         footprint_time = xr.DataArray(
             data = vad['footprint_time'].values,
@@ -2794,6 +2825,8 @@ class VAD(object):
                 "refl": refl,
                 "refl_max": refl_max,
                 "refl_std": refl_std,
+                "footprint_maxdim": footprint_maxdim,
+                "footprint_maxdim_center": footprint_maxdim_center,
                 "footprint_time": footprint_time,
                 "delta_time": delta_time,
                 "delta_time_std": delta_time_std,
