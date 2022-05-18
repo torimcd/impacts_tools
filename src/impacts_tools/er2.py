@@ -2129,10 +2129,11 @@ class VAD(object):
         )
 
         height = xr.DataArray(
-            data = vad['hght'][:,100].values,
-            dims=["range"],
+            data = vad['hght'].values,
+            dims=["range", "time"],
             coords = dict(
-                range = radar_range
+                range = radar_range,
+                time=time_dt64
             ),
             attrs = dict(
                 description = vad['hght'].long_name,
@@ -2146,6 +2147,7 @@ class VAD(object):
             coords = dict(
                 range = radar_range,
                 time = time_dt64,
+                height = height,
                 lat = lat,
                 lon = lon,
                 distance = yt),
@@ -2188,6 +2190,7 @@ class VAD(object):
             coords = dict(
                 range = radar_range,
                 time = time_dt64,
+                height = height,
                 distance = yt,
                 lat = lat,
                 lon = lon),
@@ -2204,6 +2207,7 @@ class VAD(object):
             coords = dict(
                 range = radar_range,
                 time = time_dt64,
+                height = height,
                 distance = yt,
                 lat = lat,
                 lon = lon),
@@ -2219,6 +2223,7 @@ class VAD(object):
             coords = dict(
                 range = radar_range,
                 time = time_dt64,
+                height = height,
                 distance = yt,
                 lat = lat,
                 lon = lon),
@@ -2234,6 +2239,7 @@ class VAD(object):
             coords = dict(
                 range = radar_range,
                 time = time_dt64,
+                height = height,
                 distance = yt,
                 lat = lat,
                 lon = lon),
@@ -2249,6 +2255,7 @@ class VAD(object):
             coords = dict(
                 range = radar_range,
                 time = time_dt64,
+                height = height,
                 distance = yt,
                 lat = lat,
                 lon = lon),
@@ -2264,6 +2271,7 @@ class VAD(object):
             coords = dict(
                 range = radar_range,
                 time = time_dt64,
+                height = height,
                 distance = yt,
                 lat = lat,
                 lon = lon),
@@ -2279,6 +2287,7 @@ class VAD(object):
             coords = dict(
                 range = radar_range,
                 time = time_dt64,
+                height = height,
                 distance = yt,
                 lat = lat,
                 lon = lon),
@@ -2294,6 +2303,7 @@ class VAD(object):
             coords = dict(
                 range = radar_range,
                 time = time_dt64,
+                height = height,
                 distance = yt,
                 lat = lat,
                 lon = lon),
@@ -2309,6 +2319,7 @@ class VAD(object):
             coords = dict(
                 range = radar_range,
                 time = time_dt64,
+                height = height,
                 distance = yt,
                 lat = lat,
                 lon = lon),
@@ -2323,6 +2334,7 @@ class VAD(object):
             coords = dict(
                 range = radar_range,
                 time = time_dt64,
+                height = height,
                 distance = yt,
                 lat = lat,
                 lon = lon),
@@ -2338,6 +2350,7 @@ class VAD(object):
             coords = dict(
                 range = radar_range,
                 time = time_dt64,
+                height = height,
                 distance = yt,
                 lat = lat,
                 lon = lon),
@@ -2353,6 +2366,7 @@ class VAD(object):
             coords = dict(
                 range = radar_range,
                 time = time_dt64,
+                height = height,
                 distance = yt,
                 lat = lat,
                 lon = lon),
@@ -2366,6 +2380,7 @@ class VAD(object):
             coords = dict(
                 range = radar_range,
                 time = time_dt64,
+                height = height,
                 distance = yt,
                 lat = lat,
                 lon = lon),
@@ -2380,6 +2395,7 @@ class VAD(object):
                 range = radar_range,
                 time = time_dt64,
                 distance = yt,
+                height = height,
                 lat = lat,
                 lon = lon),
             attrs = dict(
@@ -2392,6 +2408,7 @@ class VAD(object):
             coords = dict(
                 range = radar_range,
                 time = time_dt64,
+                height = height,
                 distance = yt,
                 lat = lat,
                 lon = lon),
@@ -2405,6 +2422,7 @@ class VAD(object):
             coords = dict(
                 range = radar_range,
                 time = time_dt64,
+                height = height,
                 distance = yt,
                 lat = lat,
                 lon = lon),
@@ -2418,6 +2436,7 @@ class VAD(object):
             coords = dict(
                 range = radar_range,
                 time = time_dt64,
+                height = height,
                 distance = yt,
                 lat = lat,
                 lon = lon),
@@ -2425,20 +2444,21 @@ class VAD(object):
                 description=vad['d2'].long_name
             ) 
         )
-        azihist = xr.DataArray(
+        '''azhist = xr.DataArray(
             data = vad['azihist'].values,
             dims = ["bins", "range","time"],
             coords = dict(
                 bins=histbins,
                 range = radar_range,
                 time = time_dt64,
+                height = height,
                 distance = yt,
                 lat = lat,
                 lon = lon),
             attrs = dict(
                 description=vad['azihist'].long_name
             ) 
-        )
+        )'''
         qc1 = xr.DataArray(
             data = vad['qc1'].values,
             dims = ["range","time"],
@@ -2446,6 +2466,7 @@ class VAD(object):
                 range = radar_range,
                 time = time_dt64,
                 distance = yt,
+                height = height,
                 lat = lat,
                 lon = lon),
             attrs = dict(
@@ -2458,6 +2479,7 @@ class VAD(object):
             coords = dict(
                 range = radar_range,
                 time = time_dt64,
+                height = height,
                 distance = yt,
                 lat = lat,
                 lon = lon),
@@ -2471,6 +2493,7 @@ class VAD(object):
             coords = dict(
                 range = radar_range,
                 time = time_dt64,
+                height = height,
                 distance = yt,
                 lat = lat,
                 lon = lon),
@@ -2484,6 +2507,7 @@ class VAD(object):
             coords = dict(
                 range = radar_range,
                 time = time_dt64,
+                height = height,
                 distance = yt,
                 lat = lat,
                 lon = lon),
@@ -2497,6 +2521,7 @@ class VAD(object):
             coords = dict(
                 range = radar_range,
                 time = time_dt64,
+                height = height,
                 distance = yt,
                 lat = lat,
                 lon = lon),
@@ -2794,7 +2819,7 @@ class VAD(object):
                 "c2": c2,
                 "d1": d1,
                 "d2": d2,
-                "azihist": azihist,
+                #"azhist": azhist,
                 "qc1": qc1,
                 "qc2": qc2,
                 "qc3": qc3,
