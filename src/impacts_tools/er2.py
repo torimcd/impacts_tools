@@ -208,7 +208,41 @@ class Radar(ABC):
 
         return [cfad, X, Y, vel_corrected]
 
+    def regrid_to_vad(self, vad):
+        """
+        Regrids the nadir radar data to the VAD grid
+
+        Parameters
+        ----------
+
+        vad : er2.VAD
+            the VAD object to regrid to
         
+        Returns
+        -------
+        regridded_data_2 : xarray.Dataset
+            the radar data set interpolated to the VAD grid
+        """
+
+        # check that the radar to regrid to is initialized
+        try: vad.data          
+        except: NameError: vad.data = None
+
+        if vad.data is None:
+            print("VAD object to regrid to does not exist. Try initializing the vad first")
+        
+        else:
+            #regridded_data_1 = self.data.interp_like(radar.data['time'])
+            #regridded_data_2 = regridded_data_1.interp_like(radar.data['range'])
+        
+            regridded_data_2 = self.data.interp(
+                    {"range": vad.data['range'], 
+                    "time": vad.data['time']
+                    }
+                )
+
+        return regridded_data_2
+
 
     def get_flight_legs(self):
         """
@@ -2909,3 +2943,4 @@ class VAD(object):
                 )
 
         return regridded_data_2
+
