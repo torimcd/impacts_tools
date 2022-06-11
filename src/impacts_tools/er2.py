@@ -133,11 +133,11 @@ class Radar(ABC):
         # np.isfinite returns values that are not NAN or INF
         return data_array.where(np.isfinite(temp_datafiltered))
             
+    
     def calc_cfad(self, vel_bins=None, alt_bins=None, band=None):
         """
         Calculates the frequency of radial velocity values per altitude level
         for making a contour-by-frequency (CFAD) plot 
-
         Parameters
         ----------
         vel_bins : np.ndarray or None
@@ -146,7 +146,6 @@ class Radar(ABC):
             The altitude bins to use. Defaults to alt_bins = np.linspace(100., 10000., num=45)
         band : str
             For HIWRAP, whether to use ka- or ku-band velocity
-
         Returns
         -------
         cfad : [data, X, Y] 
@@ -174,6 +173,7 @@ class Radar(ABC):
         vel_fallspeedsremoved_flat = np.zeros_like(vel_flat)
 
         vel_cfad = np.zeros((len(alt_bins)-1, len(vel_bins)-1))
+        medians = np.zeros(len(alt_bins) -1)
 
         for a in range(len(alt_bins)-1):
             # get the indices for this altitude range
@@ -195,19 +195,26 @@ class Radar(ABC):
                         vel_cfad[a, v] = (len(vel_inds) - vel_flat[vel_inds].mask.sum()) / num_valid_vel 
         
         
-                vel_max_ind = np.where(vel_cfad[a,:]==vel_cfad[a,:].max())[0]
+                #vel_max_ind = np.where(vel_cfad[a,:]==vel_cfad[a,:].max())[0]
 
                 # subtract the velocity value of the max freq
-                vel_fallspeedsremoved_flat[hght_inds] = vel_flat[hght_inds] - vel_bins[vel_max_ind[0]]
+                #vel_fallspeedsremoved_flat[hght_inds] = vel_flat[hght_inds] - vel_bins[vel_max_ind[0]]
 
+
+                # correct the velocity with the median vel at each altitude (Rosenow et al 2014)
+                med = np.ma.median(vel_flat[hght_inds])
+
+                vel_fallspeedsremoved_flat[hght_inds] = vel_flat[hght_inds] - med
+
+                # save for plotting median contour
+                medians[a] = med
 
         cfad = np.ma.masked_where(vel_cfad==0.00, vel_cfad)
         [X, Y] = np.meshgrid(vel_bins[:-1]+np.diff(vel_bins)/2, alt_bins[:-1]+np.diff(alt_bins)/2)
 
         vel_corrected = np.reshape(vel_fallspeedsremoved_flat, vel[:,:].values.shape)
 
-        return [cfad, X, Y, vel_corrected]
-
+        return [cfad, X, Y, vel_corrected, medians]
         
 
     def get_flight_legs(self):
