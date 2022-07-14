@@ -244,8 +244,8 @@ class Radar(ABC):
             #regridded_data_2 = regridded_data_1.interp_like(radar.data['range'])
         
             regridded_data_2 = self.data.interp(
-                    {"range": vad['range'], 
-                    "time": vad['time']
+                    {"range": vad.data['range'], 
+                    "time": vad.data['time']
                     }
                 )
 
