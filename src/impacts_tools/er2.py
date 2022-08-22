@@ -343,7 +343,7 @@ class Crs(Radar):
 
 
 
-    def readfile(self, filepath, start_time=None, end_time=None):
+    def readfile(self, filepath, start_time=None, end_time=None, dataset='2020'):
         """
         Reads the CRS data file and unpacks the fields into an xarray.Dataset
 
@@ -356,6 +356,8 @@ class Crs(Radar):
             The initial time of interest
         end_time : np.datetime64 or None
             The final time of interest
+        dataset  : str
+            Four-digit deployment year for handling radar variables/metadata
         
         Returns
         -------
@@ -378,12 +380,16 @@ class Crs(Radar):
 
 
         # Aircraft nav information
+        if dataset=='2020': # metadata key misspelled in 2020 dataset
+            description_str = 'NominalDistance_desciption'
+        else:# metadata key spelling fixed in 2022 dataset
+            description_str = 'NominalDistance_description'
         nomdist = xr.DataArray(
             data = hdf['Navigation']['Data']['NominalDistance'][:],
             dims = ["time"],
             coords = dict(time=time_dt64),
             attrs = dict(
-                description=hdf['Navigation']['Information']['NominalDistance_desciption'][0].decode('UTF-8'),
+                description=hdf['Navigation']['Information'][description_str][0].decode('UTF-8'),
                 units = hdf['Navigation']['Information']['NominalDistance_units'][0].decode('UTF-8')
             )
         )
@@ -894,7 +900,7 @@ class Hiwrap(Radar):
             self.mask_roll(max_roll)
 
 
-    def readfile(self, filepath, start_time=None, end_time=None):
+    def readfile(self, filepath, start_time=None, end_time=None, dataset='2020'):
         """
         Reads the HIWRAP data file and unpacks the fields into an xarray.Dataset
 
@@ -907,6 +913,8 @@ class Hiwrap(Radar):
             The initial time of interest
         end_time : np.datetime64 or None
             The final time of interest
+        dataset  : str
+            Four-digit deployment year for handling radar variables/metadata
         
         Returns
         -------
@@ -929,12 +937,16 @@ class Hiwrap(Radar):
             time_inds = np.where((time_dt64 != None))[0]
 
         # Aircraft nav information
+        if dataset=='2020': # metadata key misspelled in 2020 dataset
+            description_str = 'NominalDistance_desciption'
+        else:# metadata key spelling fixed in 2022 dataset
+            description_str = 'NominalDistance_description'
         nomdist = xr.DataArray(
             data = hdf['Navigation']['Data']['NominalDistance'][:],
             dims = ["time"],
             coords = dict(time=time_dt64),
             attrs = dict(
-                description=hdf['Navigation']['Information']['NominalDistance_desciption'][0].decode('UTF-8'),
+                description=hdf['Navigation']['Information'][description_str][0].decode('UTF-8'),
                 units = hdf['Navigation']['Information']['NominalDistance_units'][0].decode('UTF-8')
             )
         )
@@ -1600,7 +1612,7 @@ class Exrad(Radar):
         
    
 
-    def readfile(self, filepath, start_time=None, end_time=None):
+    def readfile(self, filepath, start_time=None, end_time=None, dataset='2020'):
         """
         Reads the EXRAD data file and unpacks the fields into an xarray.Dataset
 
@@ -1613,6 +1625,8 @@ class Exrad(Radar):
             The initial time of interest
         end_time : np.datetime64 or None
             The final time of interest
+        dataset  : str
+            Four-digit deployment year for handling radar variables/metadata
         
         Returns
         -------
@@ -1634,12 +1648,16 @@ class Exrad(Radar):
             time_inds = np.where((time_dt64 != None))[0]
 
         # Aircraft nav information
+        if dataset=='2020': # metadata key misspelled in 2020 dataset
+            description_str = 'NominalDistance_desciption'
+        else:# metadata key spelling fixed in 2022 dataset
+            description_str = 'NominalDistance_description'
         nomdist = xr.DataArray(
             data = hdf['Navigation']['Data']['NominalDistance'][:],
             dims = ["time"],
             coords = dict(time=time_dt64),
             attrs = dict(
-                description=hdf['Navigation']['Information']['NominalDistance_desciption'][0].decode('UTF-8'),
+                description=hdf['Navigation']['Information'][description_str][0].decode('UTF-8'),
                 units = hdf['Navigation']['Information']['NominalDistance_units'][0].decode('UTF-8')
             )
         )
