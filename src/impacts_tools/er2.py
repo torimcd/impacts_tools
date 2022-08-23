@@ -268,14 +268,14 @@ class Crs(Radar):
  
     """
 
-    def __init__(self, filepath, start_time=None, end_time=None, atten_file=None, max_roll=None, 
+    def __init__(self, filepath, start_time=None, end_time=None, atten_file=None, dataset='2020', max_roll=None, 
         dbz_sigma=None, vel_sigma=None, width_sigma=None, ldr_sigma=None, dbz_min=None, vel_min=None, width_min=None):
 
     
         self.name = 'CRS'
 
         # read the raw data
-        self.data = self.readfile(filepath, start_time, end_time)
+        self.data = self.readfile(filepath, start_time, end_time, dataset)
         """
         xarray.Dataset of radar variables and attributes
 
@@ -635,8 +635,13 @@ class Crs(Radar):
                 ) 
             )
         
+        if hdf['Products']['Information']['AircraftMotion'][:].ndim > 1: # this was a 2D var in some 2020 data
+            ac_mot_data = hdf['Products']['Information']['AircraftMotion'][:,0]
+        else: # this is a 1D var for most datasets
+            ac_mot_data = hdf['Products']['Information']['AircraftMotion'][:]
+            
         aircraft_motion = xr.DataArray(
-            data = hdf['Products']['Information']['AircraftMotion'][:,0],
+            data = ac_mot_data,
             dims = ["time"],
             coords = dict(
                 time = time_dt64,
@@ -698,7 +703,10 @@ class Crs(Radar):
         L1A_ProcessDate = hdf['Information']['L1A_ProcessDate'][0].decode('UTF-8')
         L1B_ProcessDate = hdf['Information']['L1B_ProcessDate'][0].decode('UTF-8')
         L1B_Revision = hdf['Information']['L1B_Revision'][0].decode('UTF-8')
-        L1B_Revision_Note = hdf['Information']['L1B_Revision_Note'][0].decode('UTF-8')
+        if isinstance(hdf['Information']['L1B_Revision_Note'][0], np.float64): # for nan as notes
+            L1B_Revision_Note = str(hdf['Information']['L1B_Revision_Note'][0])
+        else: # for str as notes
+            L1B_Revision_Note = hdf['Information']['L1B_Revision_Note'][0].decode('UTF-8')
         missionPI = hdf['Information']['MissionPI'][0].decode('UTF-8')
         radar_name = hdf['Information']['RadarName'][0].decode('UTF-8')
         antenna_beamwidth = hdf['Products']['Information']['AntennaBeamwidth'][0]
@@ -819,14 +827,14 @@ class Hiwrap(Radar):
                 
     """
 
-    def __init__(self, filepath, start_time=None, end_time=None, atten_file=None, max_roll=None, 
+    def __init__(self, filepath, start_time=None, end_time=None, atten_file=None, dataset='2020', max_roll=None, 
                 dbz_sigma=None, vel_sigma=None, width_sigma=None, 
                 dbz_min=None, vel_min=None, width_min=None):
     
         self.name = 'HIWRAP'
 
         # create a dataset with both ka- and ku-band data
-        self.data = self.readfile(filepath, start_time=start_time, end_time=end_time)
+        self.data = self.readfile(filepath, start_time, end_time, dataset)
         """
         xarray.Dataset of radar variables and attributes
 
@@ -908,7 +916,7 @@ class Hiwrap(Radar):
         ----------
 
         filepath : str
-            Path to the data file
+            Path to the data file (tuple of str for 2022 HIWRAP Ku- and Ka-bands)
         start_time : np.datetime64 or None
             The initial time of interest
         end_time : np.datetime64 or None
@@ -923,7 +931,11 @@ class Hiwrap(Radar):
         """
 
         # open the file
-        hdf = h5py.File(filepath, 'r')
+        if dataset=='2020': # Ku- and Ka-band products in one file
+            hdf = h5py.File(filepath, 'r')
+        else: # Ku- and Ka-band products in two files
+            hdf = h5py.File(filepath[0], 'r') # Ku-band
+            hdf2 = h5py.File(filepath[1], 'r') # Ka-band
 
         # Time information -- this is the first dimension in nav coords and products
         time_raw = hdf['Time']['Data']['TimeUTC'][:]
@@ -1288,8 +1300,12 @@ class Hiwrap(Radar):
                 ) 
             )
         
+        if hdf['Products']['Information']['AircraftMotion'][:].ndim > 1: # this was a 2D var in some 2020 data
+            ac_mot_data = hdf['Products']['Information']['AircraftMotion'][:,0]
+        else: # this is a 1D var for most datasets
+            ac_mot_data = hdf['Products']['Information']['AircraftMotion'][:]
         aircraft_motion = xr.DataArray(
-            data = hdf['Products']['Information']['AircraftMotion'][:],
+            data = ac_mot_data,
             dims = ["time"],
             coords = dict(
                 time = time_dt64,
@@ -1407,7 +1423,10 @@ class Hiwrap(Radar):
         L1A_ProcessDate = hdf['Information']['L1A_ProcessDate'][0].decode('UTF-8')
         L1B_ProcessDate = hdf['Information']['L1B_ProcessDate'][0].decode('UTF-8')
         L1B_Revision = hdf['Information']['L1B_Revision'][0].decode('UTF-8')
-        L1B_Revision_Note = hdf['Information']['L1B_Revision_Note'][0].decode('UTF-8')
+        if isinstance(hdf['Information']['L1B_Revision_Note'][0], np.float64): # for nan as notes
+            L1B_Revision_Note = str(hdf['Information']['L1B_Revision_Note'][0])
+        else: # for str as notes
+            L1B_Revision_Note = hdf['Information']['L1B_Revision_Note'][0].decode('UTF-8')
         missionPI = hdf['Information']['MissionPI'][0].decode('UTF-8')
         radar_name = hdf['Information']['RadarName'][0].decode('UTF-8')
         antenna_beamwidth_ka = hdf['Products']['Ka']['Information']['AntennaBeamwidth'][0]
@@ -1542,13 +1561,13 @@ class Exrad(Radar):
  
     """
 
-    def __init__(self, filepath, start_time=None, end_time=None, atten_file=None, max_roll=None, 
+    def __init__(self, filepath, start_time=None, end_time=None, atten_file=None, dataset='2020', max_roll=None, 
         dbz_sigma=None, vel_sigma=None, width_sigma=None, dbz_min=None, vel_min=None, width_min=None):
         
         self.name = 'EXRAD'
 
         # read the raw data
-        self.data = self.readfile(filepath, start_time, end_time)
+        self.data = self.readfile(filepath, start_time, end_time, dataset)
         """
         xarray.Dataset of radar variables and attributes
 
@@ -1905,8 +1924,12 @@ class Exrad(Radar):
                 ) 
             )
         
+        if hdf['Products']['Information']['AircraftMotion'][:].ndim > 1: # this was a 2D var in some 2020 data
+            ac_mot_data = hdf['Products']['Information']['AircraftMotion'][:,0]
+        else: # this is a 1D var for most datasets
+            ac_mot_data = hdf['Products']['Information']['AircraftMotion'][:]
         aircraft_motion = xr.DataArray(
-            data = hdf['Products']['Information']['AircraftMotion'][:],
+            data = ac_mot_data,
             dims = ["time"],
             coords = dict(
                 time = time_dt64,
@@ -1983,7 +2006,10 @@ class Exrad(Radar):
         L1A_ProcessDate = hdf['Information']['L1A_ProcessDate'][0].decode('UTF-8')
         L1B_ProcessDate = hdf['Information']['L1B_ProcessDate'][0].decode('UTF-8')
         L1B_Revision = hdf['Information']['L1B_Revision'][0].decode('UTF-8')
-        L1B_Revision_Note = hdf['Information']['L1B_Revision_Note'][0].decode('UTF-8')
+        if isinstance(hdf['Information']['L1B_Revision_Note'][0], np.float64): # for nan as notes
+            L1B_Revision_Note = str(hdf['Information']['L1B_Revision_Note'][0])
+        else: # for str as notes
+            L1B_Revision_Note = hdf['Information']['L1B_Revision_Note'][0].decode('UTF-8')
         missionPI = hdf['Information']['MissionPI'][0].decode('UTF-8')
         radar_name = hdf['Information']['RadarName'][0].decode('UTF-8')
         antenna_beamwidth = hdf['Products']['Information']['AntennaBeamwidth'][0]
