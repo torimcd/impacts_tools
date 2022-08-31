@@ -132,7 +132,25 @@ class Radar(ABC):
 
         # np.isfinite returns values that are not NAN or INF
         return data_array.where(np.isfinite(temp_datafiltered))
-            
+    
+    def resample(self, data_reference):
+        """
+        Resample the CRS or EXRAD cross section to the HIWRAP time-range grid
+        
+        Parameters
+        ----------
+        data_reference : impacts_tools.er2.Radar()
+            The radar object to use as the time-range reference grid (e.g., er2.Hiwrap())
+        """
+        # remove beams (time dim) that aren't in HIWRAP data (typically every other beam)
+        self.data = self.data.sel(time=data_reference.data.time)
+        
+        # find nearest CRS/EXRAD gate corresponding to HIWRAP range gates
+        # CRS/EXRAD height may be offset by 20-25 m (vertical sampling resolution)
+        # not a big deal as native vertical resolution much larger (> 100 m )
+        return self.data.interp(
+            range=data_reference.data.range, method='nearest', assume_sorted=True
+        )
     
     def calc_cfad(self, vel_bins=None, alt_bins=None, band=None):
         """
@@ -269,7 +287,8 @@ class Crs(Radar):
     """
 
     def __init__(self, filepath, start_time=None, end_time=None, atten_file=None, dataset='2020', max_roll=None, 
-        dbz_sigma=None, vel_sigma=None, width_sigma=None, ldr_sigma=None, dbz_min=None, vel_min=None, width_min=None):
+        dbz_sigma=None, vel_sigma=None, width_sigma=None, ldr_sigma=None, dbz_min=None, vel_min=None, width_min=None,
+        resample_ref=None, temperature=None):
 
     
         self.name = 'CRS'
@@ -340,6 +359,12 @@ class Crs(Radar):
         
         if ldr_sigma is not None:
             self.data['ldr'] = self.despeckle(self.data['ldr'], ldr_sigma)
+            
+        if (resample_ref is not None) and (temperature is not None):
+            self.data = self.resample(resample_ref)
+            self.data = self.correct_ice_atten(resample_ref, temperature)
+        elif resample_ref is not None:
+            self.data = self.resample(resample_ref)
 
 
 
@@ -779,12 +804,79 @@ class Crs(Radar):
 
         return ds
 
+    def correct_ice_atten(self, hiwrap, data_temperature=None):
+        """
+        Compute the 2-way path integrated attenuation due to ice scattering and
+        correct the W-band reflectivity.
+        
+        Parameters
+        ----------
+        hiwrap       : impacts_tools.er2.Hiwrap() object
+            The object obtained by running impacts_tools.er2.Hiwrap()
+        data_temperature : xr.DataArray() or None
+            The temperature field to optionally ignore correction >= 0C [deg C]
+        
+        Returns
+        -------
+        self.data['kw_ice'] : xr.DataArray()
+            Two-way path integrated attenuation due to ice scattering [dB]
+        """
+        # fit Kulie et al. (2014) relationship to a Z_ku-dependent func
+        dbz_ku_lin = np.array([0., 2000., 4000., 6000., 8000.]) # mm**6 / m**-3
+        ks_w_coeff = np.array([0., 7.5, 15.5, 23.75, 31.5]) # db / km
+        ks_w_func = np.poly1d(
+            np.polyfit(dbz_ku_lin, ks_w_coeff, deg=1)
+        ) # slope, intercept coeffs
+        
+        # calculate attenuation (k) per gate and clean up data
+        data_dbz_ku = hiwrap.data.dbz_ku.values
+        ks_w = ks_w_func(10. ** (data_dbz_ku / 10.)) # db / km
+        ks_w = ks_w * 0.0265 # convert to db per gate
+        if data_temperature is None: # clean up k values except for T > 0C
+            ks_w[(np.isnan(data_dbz_ku)) | (data_dbz_ku > 40.)] = 0.
+        else: # clean up k values, including when T > 0C
+            ks_w[
+                (np.isnan(data_dbz_ku)) | (data_dbz_ku > 40.) |
+                (data_temperature >= 0.)] = 0.
+        ks_w[(np.isnan(ks_w)) | (ks_w < 0.)] = 0. # change nan and negative vals to 0
 
-    def correct_ice_atten(self, hiwrap, hrrr):
-        pass
+        # calculate two-way path integrated attenuation from the per gate k
+        ks_w = np.ma.array(2. * np.cumsum(ks_w, axis=(0)))
+        
+        # add attenuation to dataset (diagnostic)
+        kw_ice = xr.full_like(self.data.dbz, 0.)
+        kw_ice.data = ks_w
+        kw_ice.attrs['description'] = (
+            '2-way path integrated attenuation from ice scattering '
+            'using k-Z_Ku relationship'
+        )
+        kw_ice.attrs['units'] = 'dB'
+        self.data['kw_ice'] = kw_ice
+
+        # correct W-band Z
+        self.data['dbz'].values += self.data['kw_ice'].values
+        
+        return self.data
 
     def correct_attenuation(self, atten_file):
-        pass
+        """
+        Correct reflectivity for attenuation at W-band due to atmospheric gases and LWC.
+
+        Parameters
+        ----------
+
+        atten_file : str
+            filepath to attenuation data
+
+        """
+        # open the attentuation file and trim to match radar beams
+        atten_data = xr.open_dataset(atten_file).sel(time=self.data.time)
+
+        # add the correction to the reflectivity values
+        self.data['dbz'].values += atten_data['k_w'].values # gases
+        self.data['dbz'].values += atten_data['k_w_l'].values # LWC
+        
+        #return self.data['dbz'].values
 
 
 
@@ -941,18 +1033,23 @@ class Hiwrap(Radar):
         time_raw = hdf['Time']['Data']['TimeUTC'][:]
         time_dt = [datetime(1970, 1, 1) + timedelta(seconds=time_raw[i]) for i in range(len(time_raw))] # Python datetime object
         time_dt64 = np.array(time_dt, dtype='datetime64[ms]') # Numpy datetime64 object (e.g., for plotting)
-        
-        # Time information for Ka-band data from 2022 deployment (separate file)
-        time2_raw = hdf2['Time']['Data']['TimeUTC'][:]
-        time2_dt = [datetime(1970, 1, 1) + timedelta(seconds=time2_raw[i]) for i in range(len(time2_raw))] # Python datetime object
-        time2_dt64 = np.array(time2_dt, dtype='datetime64[ms]') # Numpy datetime64 object (e.g., for plotting)
-        ka_inds = np.isin(time2_dt64, time_dt64) # find HIWRAP Ka-band time indices common to Ku-band
-
 
         if start_time is not None:
             time_inds = np.where((time_dt64>=start_time) & (time_dt64<=end_time))[0]
         else:
             time_inds = np.where((time_dt64 != None))[0]
+            
+        # Time information for Ka-band data from 2022 deployment (separate file)
+        if dataset=='2022':
+            time2_raw = hdf2['Time']['Data']['TimeUTC'][:]
+            time2_dt = [
+                datetime(1970, 1, 1) + timedelta(seconds=time2_raw[i])
+                for i in range(len(time2_raw))
+            ] # Python datetime object
+            time2_dt64 = np.array(
+                time2_dt, dtype='datetime64[ms]'
+            ) # Numpy datetime64 object (e.g., for plotting)
+            ka_inds = np.isin(time2_dt64, time_dt64) # find HIWRAP Ka-band time indices common to Ku-band
 
         # Aircraft nav information
         if dataset=='2020': # metadata key misspelled in 2020 dataset
@@ -1581,21 +1678,33 @@ class Hiwrap(Radar):
             L1B_Revision_Note = hdf['Information']['L1B_Revision_Note'][0].decode('UTF-8')
         missionPI = hdf['Information']['MissionPI'][0].decode('UTF-8')
         radar_name = hdf['Information']['RadarName'][0].decode('UTF-8')
-        antenna_beamwidth_ka = hdf2['Products']['Information']['AntennaBeamwidth'][0]
-        antenna_beamwidth_ku = hdf['Products']['Information']['AntennaBeamwidth'][0]
         antenna_size = hdf['Products']['Information']['AntennaSize'][0]
-        avg_pulses_ka = hdf2['Products']['Information']['AveragedPulses'][0]
-        avg_pulses_ku = hdf['Products']['Information']['AveragedPulses'][0]
-        freq_ka = hdf2['Products']['Information']['Frequency'][0]
-        freq_ku = hdf['Products']['Information']['Frequency'][0]
         gatespacing = hdf['Products']['Information']['GateSpacing'][0]
         antenna_pointing = hdf['Products']['Information']['NominalAntennaPointing'][0].decode('UTF-8')
         pri = hdf['Products']['Information']['PRI'][0].decode('UTF-8')
-        wavelength_ka = hdf2['Products']['Information']['Wavelength'][0]
-        wavelength_ku = hdf['Products']['Information']['Wavelength'][0]
+        if dataset=='2020': # for Ku- and Ka- band metadata in same file
+            antenna_beamwidth_ka = hdf['Products']['Ka']['Information']['AntennaBeamwidth'][0]
+            antenna_beamwidth_ku = hdf['Products']['Ku']['Information']['AntennaBeamwidth'][0]
+            avg_pulses_ka = hdf['Products']['Ka']['Information']['AveragedPulses'][0]
+            avg_pulses_ku = hdf['Products']['Ku']['Information']['AveragedPulses'][0]
+            freq_ka = hdf['Products']['Ka']['Information']['Frequency'][0]
+            freq_ku = hdf['Products']['Ku']['Information']['Frequency'][0]
+            wavelength_ka = hdf['Products']['Ka']['Information']['Wavelength'][0]
+            wavelength_ku = hdf['Products']['Ku']['Information']['Wavelength'][0]
+        else:
+            antenna_beamwidth_ka = hdf2['Products']['Information']['AntennaBeamwidth'][0]
+            antenna_beamwidth_ku = hdf['Products']['Information']['AntennaBeamwidth'][0]
+            avg_pulses_ka = hdf2['Products']['Information']['AveragedPulses'][0]
+            avg_pulses_ku = hdf['Products']['Information']['AveragedPulses'][0]
+            freq_ka = hdf2['Products']['Information']['Frequency'][0]
+            freq_ku = hdf['Products']['Information']['Frequency'][0]
+            wavelength_ka = hdf2['Products']['Information']['Wavelength'][0]
+            wavelength_ku = hdf['Products']['Information']['Wavelength'][0]
         
         # close the file
         hdf.close()
+        if dataset!='2020': # for deploymnets where Ku- and Ka-band split in 2 files
+            hdf2.close() 
 
         # put everything together into an XArray DataSet
         ds = xr.Dataset(
@@ -1670,7 +1779,24 @@ class Hiwrap(Radar):
 
 
     def correct_attenuation(self, atten_file):
-        pass
+        """
+        Correct reflectivity for attenuation at Ku- and Ka-band due to atmospheric gases.
+
+        Parameters
+        ----------
+
+        atten_file : str
+            filepath to attenuation data
+
+        """
+        # open the attentuation file and trim to match radar beams
+        atten_data = xr.open_dataset(atten_file).sel(time=self.data.time)
+
+        # add the correction to the reflectivity values
+        self.data['dbz_ka'].values += atten_data['k_ka'].values
+        self.data['dbz_ku'].values += atten_data['k_ku'].values
+        
+        return self.data
 
 
 
@@ -1779,6 +1905,9 @@ class Exrad(Radar):
         
         if width_sigma is not None:
             self.data['width'] = self.despeckle(self.data['width'], width_sigma)
+        
+        if resample_ref is not None:
+            self.data = self.resample(self.data, resample_ref)
         
         
    
@@ -2247,11 +2376,13 @@ class Exrad(Radar):
             filepath to attenuation data
 
         """
-        # open the attentuation file
-        atten_data = xr.open_dataset(atten_file)
+        # open the attentuation file and trim to match radar beams
+        atten_data = xr.open_dataset(atten_file).sel(time=self.data.time)
 
         # add the correction to the reflectivity values
         self.data['dbz'].values += atten_data['k_x'].values
+        
+        return self.data
 
     
 
