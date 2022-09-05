@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from abc import ABC, abstractmethod
 from scipy.optimize import least_squares
 
-def parse_header(self, f, date):
+def parse_header(f, date):
         '''
         NLHEAD : Number of header lines
         FFI : NASA AMES FFI format number
@@ -615,6 +615,13 @@ class P3():
 class Instrument(ABC):
     """
     A class to represent most P-3 instruments during the IMPACTS field campaign.
+    
+    Instrument is an Abstract Base Class - meaning we always require a more specific class 
+    to be instantiated - ie you have to call Tamms() or Psd(), you can't just call Instrument()
+    Parameters
+    ----------
+    data : xarray.Dataset()
+        Instrument data and attributes
     """
     @abstractmethod     # this stops you from being able to make a new generic instrument
     def __init__(self):
@@ -665,17 +672,20 @@ class Instrument(ABC):
             
         # copy P-3 datetimes and upsample based on datset frequency
         if td_p3 == pd.Timedelta(1, 's'):
-            end_time = p3nav_avg.data['time'][-1].values
+            end_time = p3_object.data['time'][-1].values
         else:
-            end_time = p3nav_avg.data['time'][-1].values - td_ds
+            end_time = p3_object.data['time'][-1].values - td_ds
         dt_range = pd.date_range(
-            start=p3nav_avg.data['time'][0].values, end=end_time, freq=td_ds
+            start=p3_object.data['time'][0].values, end=end_time, freq=td_ds
         )
         dummy_times = xr.Dataset(
-            coords = dict(time_dim = dt_range)
+            coords = {time_dim: dt_range}
         )
         
-        return self.data.interp_like(dummy_times), dt_range.freqstr
+        return (
+            self.data.interp_like(dummy_times),
+            pd.tseries.frequencies.to_offset(td_p3).freqstr
+        )
     
     def trim_time_bounds(self, start_time=None, end_time=None, tres='1S'):
         """
@@ -808,7 +818,7 @@ class Tamms(Instrument):
             self.data = self.trim_time_bounds(start_time, end_time, tres)
             
         # downsample data if specified by the P-3 Met-Nav data or tres argument
-        ds_downsampled = downsample(self, p3_object, tres)
+        ds_downsampled = self.downsample(tres)
         ds_downsampled = ds_downsampled.rename_dims(
             dims_dict={'time_raw': 'time'}
         )
@@ -829,195 +839,196 @@ class Tamms(Instrument):
                 units='m/s'
             )
         )
+        ds_downsampled['wwnd_std'] = wwnd_std
         
         # merge the native (*_raw) and downsampled resolution datasets
-        self.data = xr.merge([self.data, ds_downsampled, wwnd_std])
+        self.data = xr.merge([self.data, ds_downsampled])
         
-        def readfile(self, filepath, date):#, p3_object=None, start_time=None, end_time=None, tres='1S'):
-            """
-            Reads the TAMMS data file and unpacks the fields into an xarray.Dataset
+    def readfile(self, filepath, date):#, p3_object=None, start_time=None, end_time=None, tres='1S'):
+        """
+        Reads the TAMMS data file and unpacks the fields into an xarray.Dataset
 
-            Parameters
-            ----------
-            filepath : str
-                Path to the data file
-            date: str
-                Flight start date in YYYY-mm-dd format
-            p3_object: impacts_tools.p3.P3() or None
-                P-3 Met-Nav object to optionally contrain times and average data
-            start_time : np.datetime64 or None
-                The initial time of interest
-            end_time : np.datetime64 or None
-                The final time of interest
-            tres: str
-                The time interval to average over (e.g., '5S' for 5 seconds)
+        Parameters
+        ----------
+        filepath : str
+            Path to the data file
+        date: str
+            Flight start date in YYYY-mm-dd format
+        p3_object: impacts_tools.p3.P3() or None
+            P-3 Met-Nav object to optionally contrain times and average data
+        start_time : np.datetime64 or None
+            The initial time of interest
+        end_time : np.datetime64 or None
+            The final time of interest
+        tres: str
+            The time interval to average over (e.g., '5S' for 5 seconds)
 
-            Returns
-            -------
-            data : xarray.Dataset
-                The unpacked dataset
-            """
+        Returns
+        -------
+        data : xarray.Dataset
+            The unpacked dataset
+        """
 
-            # get header info following the NASA AMES format
-            header = parse_header(open(filepath, 'r'), date)
+        # get header info following the NASA AMES format
+        header = parse_header(open(filepath, 'r'), date)
 
-            # parse the data
-            data_raw = np.genfromtxt(
-                filepath, delimiter=',', skip_header=int(header['NLHEAD']),
-                missing_values=header['VMISS'], usemask=True, filling_values=np.nan
-            )
+        # parse the data
+        data_raw = np.genfromtxt(
+            filepath, delimiter=',', skip_header=int(header['NLHEAD']),
+            missing_values=header['VMISS'], usemask=True, filling_values=np.nan
+        )
 
-            # construct dictionary of variable data and metadata
-            readfile = {}
-            for jj, unit in enumerate(header['VUNIT']):
-                header['VUNIT'][jj] = unit.split(',')[0]
-            for jj, name in enumerate(header['VNAME']):
-                readfile[name] = np.array(data_raw[:, jj] * header['VSCAL'][jj])
-                readfile[name][readfile[name]==header['VMISS'][jj]] = np.nan
-                
-            # populate dataset attributes
-            p3_attrs = {
-                'Experiment': 'IMPACTS',
-                'Platform': 'P-3',
-                'Mission PI': 'Lynn McMurdie (lynnm@uw.edu)'}
-            instrum_info_counter = 1
-            for ii, comment in enumerate(header['NCOM'][:-1]): # add global attrs
-                parsed_comment = comment.split(':')
-                if len(parsed_comment) > 1:
-                    p3_attrs[parsed_comment[0]] = parsed_comment[1][1:]
-                else: # handles multiple instrument info lines in *_R0.ict files
-                    instrum_info_counter += 1
-                    p3_attrs[
-                        'INSTRUMENT_INFO_'+str(instrum_info_counter)] = parsed_comment[0][1:]
+        # construct dictionary of variable data and metadata
+        readfile = {}
+        for jj, unit in enumerate(header['VUNIT']):
+            header['VUNIT'][jj] = unit.split(',')[0]
+        for jj, name in enumerate(header['VNAME']):
+            readfile[name] = np.array(data_raw[:, jj] * header['VSCAL'][jj])
+            readfile[name][readfile[name]==header['VMISS'][jj]] = np.nan
 
-            # compute time
-            sec_frac, sec = np.modf(readfile['time'])
-            time = np.array([
-                np.datetime64(date) + np.timedelta64(int(sec[i]), 's') +
-                np.timedelta64(int(np.round(1000. * sec_frac[i])), 'ms')
-                for i in range(len(readfile['time']))], dtype='datetime64[ms]'
-            )
+        # populate dataset attributes
+        p3_attrs = {
+            'Experiment': 'IMPACTS',
+            'Platform': 'P-3',
+            'Mission PI': 'Lynn McMurdie (lynnm@uw.edu)'}
+        instrum_info_counter = 1
+        for ii, comment in enumerate(header['NCOM'][:-1]): # add global attrs
+            parsed_comment = comment.split(':')
+            if len(parsed_comment) > 1:
+                p3_attrs[parsed_comment[0]] = parsed_comment[1][1:]
+            else: # handles multiple instrument info lines in *_R0.ict files
+                instrum_info_counter += 1
+                p3_attrs[
+                    'INSTRUMENT_INFO_'+str(instrum_info_counter)] = parsed_comment[0][1:]
 
-            # populate data arrays
-            lat = xr.DataArray(
-                data = np.ma.masked_invalid(readfile['Latitude_deg']),
-                dims = ['time_raw'],
-                coords = dict(time_raw = time),
-                attrs = dict(
-                    description='Aircraft latitude',
-                    units='degrees_north')
-            )
-            lon = xr.DataArray(
-                data = np.ma.masked_invalid(readfile['Longitude_deg']),
-                dims = ['time_raw'],
-                coords = dict(time_raw = time),
-                attrs = dict(
-                    description='Aircraft longitude',
-                    units='degrees_east')
-            )
-            alt_gps = xr.DataArray(
-                data = np.ma.masked_invalid(readfile['GPS_alt_m']),
-                dims = ['time_raw'],
-                coords = dict(time_raw = time),
-                attrs = dict(
-                    description='Aircraft GPS altitude (mean sea level)',
-                    units='meters')
-            )
-            alt_pres = xr.DataArray(
-                data = np.ma.masked_invalid(readfile['PALT_ft']),
-                dims = ['time_raw'],
-                coords = dict(time_raw = time),
-                attrs = dict(
-                    description='Aircraft pressure altitude',
-                    units='feet')
-            )
-            pitch = xr.DataArray(
-                data = np.ma.masked_invalid(readfile['Pitch_deg']),
-                dims = ['time_raw'],
-                coords = dict(time_raw = time),
-                attrs = dict(
-                    description='Aircraft pitch angle (positive is up)',
-                    units='degrees')
-            )
-            roll = xr.DataArray(
-                data = np.ma.masked_invalid(readfile['Roll_deg']),
-                dims = ['time_raw'],
-                coords = dict(time_raw = time),
-                attrs = dict(
-                    description='Aircraft roll angle (positive is right turn)',
-                    units='degrees')
-            )
-            t = xr.DataArray(
-                data = np.ma.masked_invalid(readfile['Tstat_degC']),
-                dims = ['time_raw'],
-                coords = dict(time_raw = time),
-                attrs = dict(
-                    description='Static (ambient) air temperature',
-                    units='degrees_Celsius')
-            )
-            wspd = xr.DataArray(
-                data = np.ma.masked_invalid(readfile['WSPD_ms-1']),
-                dims = ['time_raw'],
-                coords = dict(time_raw = time),
-                attrs = dict(
-                    description='Horizontal wind speed',
-                    units='m/s')
-            )
-            wdir = xr.DataArray(
-                data = np.ma.masked_invalid(readfile['WDIR_deg']),
-                dims = ['time_raw'],
-                coords = dict(time_raw = time),
-                attrs = dict(
-                    description='Horizontal wind direction (clockwise from +y)',
-                    units='degrees')
-            )
-            wwnd = xr.DataArray(
-                data = np.ma.masked_invalid(readfile['w_ms-1']),
-                dims = ['time_raw'],
-                coords = dict(time_raw = time),
-                attrs = dict(
-                    description='Vertical component wind speed',
-                    units='m/s')
-            )
-            wdir_math = wdir - 270. # convert to math-relative dirction
-            wdir_math[wdir_math < 0.] += 360. # fix negative values
-            uwnd = xr.DataArray(
-                data = np.ma.masked_invalid(wspd * np.cos(np.deg2rad(wdir_math))),
-                dims = ['time_raw'],
-                coords = dict(time_raw = time),
-                attrs = dict(
-                    description='Horizontal U-component wind speed',
-                    units='m/s')
-            )
-            vwnd = xr.DataArray(
-                data = np.ma.masked_invalid(wspd * np.sin(np.deg2rad(wdir_math))),
-                dims = ['time_raw'],
-                coords = dict(time_raw = time),
-                attrs = dict(
-                    description='Horizontal V-component wind speed',
-                    units='m/s')
-            )
-            
-            # put everything together into an XArray Dataset
-            ds = xr.Dataset(
-                data_vars={
-                    'lon_raw': lon,
-                    'lat_raw': lat,
-                    'alt_gps_raw': alt_gps,
-                    'alt_pres_raw': alt_pres,
-                    'pitch_raw': pitch,
-                    'roll_raw': roll,
-                    'temp_raw': t,
-                    'wspd_raw': wspd,
-                    'wdir_raw': wdir,
-                    'uwnd_raw': uwnd,
-                    'vwnd_raw': vwnd,
-                    'wwnd_raw': wwnd
-                },
-                coords={
-                    'time_raw': time
-                },
-                attrs=p3_attrs
-            )
-            
-            return ds
+        # compute time
+        sec_frac, sec = np.modf(readfile['time'])
+        time = np.array([
+            np.datetime64(date) + np.timedelta64(int(sec[i]), 's') +
+            np.timedelta64(int(np.round(1000. * sec_frac[i])), 'ms')
+            for i in range(len(readfile['time']))], dtype='datetime64[ms]'
+        )
+
+        # populate data arrays
+        lat = xr.DataArray(
+            data = np.ma.masked_invalid(readfile['Latitude_deg']),
+            dims = ['time_raw'],
+            coords = dict(time_raw = time),
+            attrs = dict(
+                description='Aircraft latitude',
+                units='degrees_north')
+        )
+        lon = xr.DataArray(
+            data = np.ma.masked_invalid(readfile['Longitude_deg']),
+            dims = ['time_raw'],
+            coords = dict(time_raw = time),
+            attrs = dict(
+                description='Aircraft longitude',
+                units='degrees_east')
+        )
+        alt_gps = xr.DataArray(
+            data = np.ma.masked_invalid(readfile['GPS_alt_m']),
+            dims = ['time_raw'],
+            coords = dict(time_raw = time),
+            attrs = dict(
+                description='Aircraft GPS altitude (mean sea level)',
+                units='meters')
+        )
+        alt_pres = xr.DataArray(
+            data = np.ma.masked_invalid(readfile['PALT_ft']),
+            dims = ['time_raw'],
+            coords = dict(time_raw = time),
+            attrs = dict(
+                description='Aircraft pressure altitude',
+                units='feet')
+        )
+        pitch = xr.DataArray(
+            data = np.ma.masked_invalid(readfile['Pitch_deg']),
+            dims = ['time_raw'],
+            coords = dict(time_raw = time),
+            attrs = dict(
+                description='Aircraft pitch angle (positive is up)',
+                units='degrees')
+        )
+        roll = xr.DataArray(
+            data = np.ma.masked_invalid(readfile['Roll_deg']),
+            dims = ['time_raw'],
+            coords = dict(time_raw = time),
+            attrs = dict(
+                description='Aircraft roll angle (positive is right turn)',
+                units='degrees')
+        )
+        t = xr.DataArray(
+            data = np.ma.masked_invalid(readfile['Tstat_degC']),
+            dims = ['time_raw'],
+            coords = dict(time_raw = time),
+            attrs = dict(
+                description='Static (ambient) air temperature',
+                units='degrees_Celsius')
+        )
+        wspd = xr.DataArray(
+            data = np.ma.masked_invalid(readfile['WSPD_ms-1']),
+            dims = ['time_raw'],
+            coords = dict(time_raw = time),
+            attrs = dict(
+                description='Horizontal wind speed',
+                units='m/s')
+        )
+        wdir = xr.DataArray(
+            data = np.ma.masked_invalid(readfile['WDIR_deg']),
+            dims = ['time_raw'],
+            coords = dict(time_raw = time),
+            attrs = dict(
+                description='Horizontal wind direction (clockwise from +y)',
+                units='degrees')
+        )
+        wwnd = xr.DataArray(
+            data = np.ma.masked_invalid(readfile['w_ms-1']),
+            dims = ['time_raw'],
+            coords = dict(time_raw = time),
+            attrs = dict(
+                description='Vertical component wind speed',
+                units='m/s')
+        )
+        wdir_math = wdir - 270. # convert to math-relative dirction
+        wdir_math[wdir_math < 0.] += 360. # fix negative values
+        uwnd = xr.DataArray(
+            data = np.ma.masked_invalid(wspd * np.cos(np.deg2rad(wdir_math))),
+            dims = ['time_raw'],
+            coords = dict(time_raw = time),
+            attrs = dict(
+                description='Horizontal U-component wind speed',
+                units='m/s')
+        )
+        vwnd = xr.DataArray(
+            data = np.ma.masked_invalid(wspd * np.sin(np.deg2rad(wdir_math))),
+            dims = ['time_raw'],
+            coords = dict(time_raw = time),
+            attrs = dict(
+                description='Horizontal V-component wind speed',
+                units='m/s')
+        )
+
+        # put everything together into an XArray Dataset
+        ds = xr.Dataset(
+            data_vars={
+                'lon_raw': lon,
+                'lat_raw': lat,
+                'alt_gps_raw': alt_gps,
+                'alt_pres_raw': alt_pres,
+                'pitch_raw': pitch,
+                'roll_raw': roll,
+                'temp_raw': t,
+                'wspd_raw': wspd,
+                'wdir_raw': wdir,
+                'uwnd_raw': uwnd,
+                'vwnd_raw': vwnd,
+                'wwnd_raw': wwnd
+            },
+            coords={
+                'time_raw': time
+            },
+            attrs=p3_attrs
+        )
+
+        return ds
