@@ -630,14 +630,6 @@ class Instrument(ABC):
         """
         self.name = None
         self.data = None
-
-
-    @abstractmethod
-    def readfile(self, filepath):
-        """
-        This is an abstract method since only inherited classes will be used to read instrument data into objects.
-        """
-        pass
     
     def trim_to_p3(self, p3_object):
         """
@@ -708,7 +700,7 @@ class Instrument(ABC):
         
         if (start_time is not None) or (end_time is not None):      
             # compute dataset timedelta
-            if 'time' in list(self.data.data_vars): # for 1 Hz datasets
+            if 'time' in list(self.data.coords): # for 1 Hz datasets
                 time_dim = 'time'
             else: # for datasets > 1 Hz frequency (e.g., TAMMS)
                 time_dim = 'time_raw'
@@ -719,15 +711,12 @@ class Instrument(ABC):
             # format start and end times
             if start_time is None:
                 start_time = self.data[time_dim][0].values
-            else:
-                start_time = np.datetime64(start_time)
+                
             if end_time is None:
                 end_time = self.data[time_dim][-1].values
-            else:
-                end_time = np.datetime64(end_time)
 
             # generate upsampled datetime array based on specified frequency
-            if tres != pd.Timedelta(1, 's'):
+            if pd.Timedelta(tres) != pd.Timedelta(1, 's'):
                 end_time -= td_ds
             dummy_times = xr.Dataset(
                 coords={
@@ -748,16 +737,44 @@ class Instrument(ABC):
         freq: pandas.to_timedelta().TimedeltaIndex
             The time interval to average over (e.g., '5S' for 5 seconds)
         """
-        if 'time' in list(self.data.data_vars): # for 1 Hz datasets
+        if self.name == 'UIOOPS PSD': # special resampling of some variables
             td_ds = pd.to_timedelta(
                 self.data['time'][1].values - self.data['time'][0].values
             )
             if pd.to_timedelta(tres) > td_ds: # upsampling not supported
-                return self.data.resample(time=tres).mean(skipna=True, keep_attrs=True)
-        else: # for datasets > 1 Hz frequency (e.g., TAMMS)
-            ds_downsampled = self.data.resample(
-                time_raw=tres).mean(skipna=True, keep_attrs=True)
-            return ds_downsampled # return new dataset (keep original resolution)
+                sum_vars = ['count', 'count_habit', 'sv']
+                mean_nan_vars = ['ND', 'ND_habit']
+                mean_vars = ['area_ratio', 'aspect_ratio']
+                if '2DS' in self.instruments:
+                    mean_vars.append('active_time_2ds')
+                if 'HVPS' in self.instruments:
+                    mean_vars.append('active_time_hvps')
+                    
+                ds_sum_vars = self.data[sum_vars].resample(time=tres).sum(
+                    skipna=True, keep_attrs=True)
+                ds_mean_nan_vars = self.data[mean_nan_vars].fillna(0.).resample(time=tres).mean(
+                    skipna=True, keep_attrs=True)
+                ds_mean_nan_vars = ds_mean_nan_vars.where(ds_mean_nan_vars != 0.)
+                ds_mean_vars = self.data[mean_vars].resample(time=tres).mean(
+                    skipna=True, keep_attrs=True)
+                ds_downsampled = xr.merge(
+                    [ds_sum_vars, ds_mean_nan_vars, ds_mean_vars]
+                ).transpose('habit', 'size', 'time')
+                return ds_downsampled
+            else:
+                return self.data
+        else:
+            if 'time' in list(self.data.data_vars): # for 1 Hz datasets
+                td_ds = pd.to_timedelta(
+                    self.data['time'][1].values - self.data['time'][0].values
+                )
+                if pd.to_timedelta(tres) > td_ds: # upsampling not supported
+                    return self.data.resample(time=tres).mean(skipna=True, keep_attrs=True)
+            else: # for datasets > 1 Hz frequency (e.g., TAMMS)
+                sum_vars = []
+                ds_downsampled = self.data.resample(
+                    time_raw=tres).mean(skipna=True, keep_attrs=True)
+                return ds_downsampled # return new dataset (keep original resolution)
     
 # ====================================== #
 # TAMMS
@@ -1032,3 +1049,785 @@ class Tamms(Instrument):
         )
 
         return ds
+    
+# ====================================== #
+# PSDs
+# ====================================== #
+class Psd(Instrument):
+    """
+    A class to represent the PSDs from optical array probes flown on the P-3 during the IMPACTS field campaign.
+    Inherits from Instrument()
+    
+    Parameters
+    ----------
+    filepath_2ds: str or None
+        File path to the 2D-S/Hawkeye 2D-S PSD data file
+    filepath_hvps: str or None
+        File path to the HVPS PSD data file
+    p3_object: impacts_tools.p3.P3() object or None
+        The optional P-3 Met-Nav object to automatically trim and average the PSD data
+    start_time: np.datetime64 or None
+        The initial time of interest eg. if looking at a single flight leg
+    end_time: np.datetime64 or None
+        The final time of interest eg. if looking at a single flight leg
+    tres: str
+        The time interval to average over (e.g., '5S' for 5 seconds)
+    software: str
+        Processing software ('uioops' or 'soda') for file-specific reading of data
+    binlims: tuple of float
+        2- or 3-element tuple representing size limits (mm) for the 2D-S and/or HVPS
+    ovld_thresh: float (0. - 1.) or None
+        Proportion of 1-s interval of allowable dead time (overload) for the PSD
+    calc_bulk: bool
+        Compute bulk properties (only if True)
+    calc_gamma_params: bool
+        Calculate gamma fit parameters using DIGF technique
+    """
+
+    def __init__(
+            self, filepath_2ds, filepath_hvps, date, p3_object=None,
+            start_time=None, end_time=None, tres='1S',
+            software='UIOOPS', binlims=(0.1, 1.4, 30.), ovld_thresh=0.7,
+            calc_bulk=False, calc_gamma_params=False):
+        self.name = f'{software} PSD'
+        if (filepath_2ds is not None) and (filepath_hvps is not None):
+            self.instruments = '2DS and HVPS'
+        elif filepath_2ds is not None:
+            self.instruments = '2DS'
+        elif filepath_hvps is not None:
+            self.instruments = 'HVPS'
+        
+        # read the raw data
+        if software == 'UIOOPS':
+            self.data = self.readfile_uioops(
+                filepath_2ds, filepath_hvps, date, binlims, ovld_thresh
+            )
+            """
+            xarray.Dataset of UIOOPS PSD variables and attributes
+            Dimensions:
+                - time: np.array(np.datetime64[ns]) - The UTC time start of the N-s upsampled interval
+            Coordinates:
+                - habit (habit): np.array(dtype=char) - Habits from the Holroyd classification scheme
+                - bin_center (size): np.array(np.float64) - Size bin midpoint (mm)
+                - bin_left (size): np.array(np.float64) - Size bin left endpoint (mm)
+                - bin_right (size): np.array(np.float64) - Size bin right endpoint (mm)
+                - bin_width (size): np.array(np.float64) - Size bin width (cm)
+                - time (time): np.array(np.datetime64[ns]) - The UTC time start of the N-s upsampled interval
+            Variables:
+                - count (size, time): xarray.DataArray(float) - Particle count per size bin (#)
+                - count_habit (habit, size, time): xarray.DataArray(float) - Particle count per habit category and size bin (#)
+                - sv (size, time): xarray.DataArray(float) - Sample volume (cm3)
+                - ND (size, time): xarray.DataArray(float) - Number distribution function (cm-4)
+                - ND_habit (habit, size, time): xarray.DataArray(float) - Number distribution function per habit category(cm-4)
+                - area_ratio (size, time): xarray.DataArray(float) - Mean area ratio per size bin (#)
+                - aspect_ratio (size, time): xarray.DataArray(float) - Mean aspect ratio per size bin (#)
+                - active_time_<probe> (size, time): xarray.DataArray(float) - Probe active time (s)
+                - n (time): xarray.DataArray(float) - Number concentration (L-1)
+                - iwc_<mD> (time): xarray.DataArray(float) - Ice water content using specified mass-dimension (m-D) relationship (g m-3)
+                - dm_<mD> (time): xarray.DataArray(float) - Mass-weighted mean diam using specified m-D relationship (mm)
+                - dmm_<mD> (time): xarray.DataArray(float) - Median mass diam using specified m-D relationship (mm)
+                - rhoe_<mD> (time): xarray.DataArray(float) - Effective density using specified m-D relationship (g cm-3)
+                - area_ratio_mean_<mD> (time): xarray.DataArray(float) - Mean area ratio using number or mass (m-D) weighting (#)
+                - aspect_ratio_mean_<mD> (time): xarray.DataArray(float) - Mean aspect ratio using number or mass (m-D) weighting (#)
+            """
+        
+        # trim dataset to P-3 time bounds or from specified start/end
+        if p3_object is not None:
+            self.data, tres = self.trim_to_p3(p3_object)
+        elif (start_time is not None) or (end_time is not None):
+            self.data = self.trim_time_bounds(start_time, end_time, tres)
+
+        # downsample data if specified by the P-3 Met-Nav data or tres argument
+        self.data = self.downsample(tres)
+        
+        # compute bulk properties
+        if calc_bulk:
+            self.data = self.bulk_properties(calc_gamma_params)
+        
+    def readfile_uioops(
+            self, filepath_2ds, filepath_hvps, date,
+            binlims=(0.1, 1.4, 30.), ovld_thresh=0.7):
+        
+        # initialize dataset list to accomodate 2 probe PSDs
+        ds_list = []
+        
+        # load the datasets if available
+        for (probe, file) in zip(['2ds', 'hvps'], [filepath_2ds, filepath_hvps]):
+            if file is not None:
+                data = xr.open_dataset(file)
+                time = self.hhmmss2dt(data['time'], date)
+                bin_min = data['bin_min'].values
+                bin_max = data['bin_max'].values
+                bin_width = data['bin_dD'].values / 10. # (cm)
+                bin_mid = data['bin_min'].values
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    count_temp = data['count'].values.T
+                    sv_temp = data['sample_vol'].values.T
+                    count_habit_raw = (
+                        data['habitsd'].values.T) * np.tile(
+                        np.moveaxis(np.atleast_3d(sv_temp), -1, 0), (10, 1, 1)) * np.tile(
+                        np.atleast_3d(bin_width), (10, 1, sv_temp.shape[1]))
+                    count_habit_temp = np.array([
+                        count_habit_raw[3, :, :], count_habit_raw[0, :, :],
+                        np.nansum(count_habit_raw[1:3, :, :], axis=0),
+                        count_habit_raw[4, :, :], count_habit_raw[5, :, :],
+                        count_habit_raw[6, :, :], count_habit_raw[7, :, :],
+                        count_habit_raw[8, :, :]])
+                    ND_temp = np.ma.masked_where(
+                        count_temp==0.,
+                        count_temp / sv_temp / np.tile(np.atleast_2d(bin_width).T,
+                                             (1, count_temp.shape[1])))
+                    ND_habit_temp = np.ma.masked_where(
+                        count_habit_temp==0.,
+                        count_habit_temp / sv_temp /
+                        np.tile(np.atleast_3d(bin_width).T,
+                                (count_habit_temp.shape[0], 1,
+                                 count_habit_temp.shape[2])
+                               )
+                    )
+                    ar_temp = data['mean_area_ratio'].values.T
+                    asr_temp = data['mean_aspect_ratio_ellipse'].values.T
+                    active_time_temp = data['sum_IntArr'].values
+                
+                # establish the data arrays
+                habits = [
+                    'Tiny', 'Spherical', 'Linear', 'Hexagonal', 'Irregular',
+                    'Graupel', 'Dendrite', 'Aggregate']
+                bin_mid = xr.DataArray(
+                    data=bin_mid, dims = 'size',
+                    attrs = dict(
+                        description='Particle size bin midpoint',
+                        units = 'mm')
+                )
+                bin_min = xr.DataArray(
+                    data=bin_min, dims = 'size',
+                    attrs = dict(
+                        description='Particle size bin left endpoint',
+                        units = 'mm')
+                )
+                bin_max = xr.DataArray(
+                    data=bin_max, dims = 'size',
+                    attrs = dict(
+                        description='Particle size bin right endpoint',
+                        units = 'mm')
+                )
+                bin_width = xr.DataArray(
+                    data=bin_width, dims = 'size',
+                    attrs = dict(
+                        description='Particle size bin width',
+                        units = 'cm')
+                )
+                count = xr.DataArray(
+                    data = count_temp,
+                    dims = ['size', 'time'],
+                    coords = dict(
+                        bin_center=bin_mid, bin_left=bin_min, bin_right=bin_max,
+                        bin_width=bin_width, time=time),
+                    attrs = dict(
+                        description='Particle count per size bin',
+                        units = '#')
+                )
+                count_hab = xr.DataArray(
+                    data = count_habit_temp,
+                    dims = ['habit', 'size', 'time'],
+                    coords = dict(
+                        habit=habits,
+                        bin_center=bin_mid, bin_left=bin_min, bin_right=bin_max,
+                        bin_width=bin_width, time=time),
+                    attrs = dict(
+                        description='Particle count per habit category and size bin',
+                        units = '#')
+                )
+                sv = xr.DataArray(
+                    data = sv_temp,
+                    dims = ['size', 'time'],
+                    coords = dict(
+                        bin_center=bin_mid, bin_left=bin_min, bin_right=bin_max,
+                        bin_width=bin_width, time=time),
+                    attrs = dict(
+                        description='Sample volume per bin over the time interval',
+                        units = 'cm3')
+                )
+                ND = xr.DataArray(
+                    data = ND_temp,
+                    dims = ['size', 'time'],
+                    coords = dict(
+                        bin_center=bin_mid, bin_left=bin_min, bin_right=bin_max,
+                        bin_width=bin_width, time=time),
+                    attrs = dict(
+                        description='Number distribution function (PSD)',
+                        units = 'cm-4')
+                )
+                ND_hab = xr.DataArray(
+                    data = ND_habit_temp,
+                    dims = ['habit', 'size', 'time'],
+                    coords = dict(
+                        bin_center=bin_mid, bin_left=bin_min, bin_right=bin_max,
+                        bin_width=bin_width, time=time),
+                    attrs = dict(
+                        description='Number distribution function (PSD) per habit category',
+                        units = 'cm-4')
+                )
+                ar = xr.DataArray(
+                    data = ar_temp,
+                    dims = ['size', 'time'],
+                    coords = dict(
+                        bin_center=bin_mid, bin_left=bin_min, bin_right=bin_max,
+                        bin_width=bin_width, time=time),
+                    attrs = dict(
+                        description='Mean area ratio (circular fit) per bin',
+                        units = '#')
+                )
+                asr = xr.DataArray(
+                    data = asr_temp,
+                    dims = ['size', 'time'],
+                    coords = dict(
+                        bin_center=bin_mid, bin_left=bin_min, bin_right=bin_max,
+                        bin_width=bin_width, time=time),
+                    attrs = dict(
+                        description='Mean aspect ratio (elliptical fit) per bin',
+                        units = '#')
+                )
+                at = xr.DataArray(
+                    data = active_time_temp,
+                    dims = 'time',
+                    coords = dict(time=time),
+                    attrs = dict(
+                        description='Probe active time',
+                        deadtime_threshold = f'{ovld_thresh}',
+                        units = 's')
+                )
+                
+                # put everything together into an XArray DataSet
+                ds = xr.Dataset(
+                    data_vars={
+                        'count': count,
+                        'count_habit': count_hab,
+                        'sv': sv,
+                        'ND': ND,
+                        'ND_habit': ND_hab,
+                        'area_ratio': ar,
+                        'aspect_ratio': asr,
+                        'active_time': at
+                    },
+                    coords={
+                        'habit': habits,
+                        'bin_center': bin_mid,
+                        'bin_left': bin_min,
+                        'bin_right': bin_max,
+                        'bin_width': bin_width,
+                        'time': time
+                    },
+                    attrs={
+                        'Experiment': 'IMPACTS',
+                        'Date': date,
+                        'Aircraft': 'P-3',
+                        'Data Contact': 'Joseph Finlon (jfinlon@uw.edu)',
+                        'Instrument PI': 'David Delene (david.delene@und.edu)',
+                        'Mission PI': 'Lynn McMurdie (lynnm@uw.edu)',
+                        'L3A Software': data.attrs['Software'],
+                        'L3A Revision': data.attrs['Data Version'],
+                    }
+                )
+                
+                # trim based on probe size limits
+                if probe == '2ds':
+                    ds = ds.sel(
+                        size=(ds.bin_left >= binlims[0]) & (ds.bin_left < binlims[1])
+                    )
+                else:
+                    ds = ds.sel(
+                        size=(ds.bin_left >= binlims[-2]) & (ds.bin_left < binlims[-1])
+                    )
+                ds_list.append(ds)
+                
+            # concatonate probe PSDs if applicable
+            if len(ds_list) == 1: # no need to merge PSDs
+                ds_merged = ds_list[0].drop_vars('active_time')
+            else:
+                ds_merged = xr.concat(
+                    [ds_list[0].drop_vars('active_time'),
+                     ds_list[1].drop_vars('active_time')
+                    ], dim='size'
+                ) # concatenate, drop active_time for now
+                #ds_merged['active_time_2ds'] = ds_list[0]['active_time']
+                #ds_merged['active_time_hvps'] = ds_list[1]['active_time']
+                
+            # mask periods when dead time exceeds the specified threshold (optional)
+            if (ovld_thresh is not None) and (len(ds_list) > 0):
+                if len(ds_list) == 1: # only one probe available
+                    good_times = ((ds_list[0]['active_time'] >= 1. - ovld_thresh))
+                else: # both 2D-S and HVPS available, need good data from both probes
+                    good_times = (
+                        (ds_list[0]['active_time'] >= 1. - ovld_thresh) & # 2D-S
+                        (ds_list[1]['active_time'] >= 1. - ovld_thresh) # HVPS
+                    )
+                ds_merged = ds_merged.where(good_times) # values for bad times become nan
+                
+            # add probe active time to dataset
+            if (len(ds_list) == 1) and (filepath_2ds is not None): # 2D-S only
+                ds_merged['active_time_2ds'] = ds_list[0]['active_time']
+            elif (len(ds_list) == 1) and (filepath_hvps is not None): # HVPS only
+                ds_merged['active_time_hvps'] = ds_list[0]['active_time']
+            else: # both 2D-S and HVPS available, add the probe active time for each
+                ds_merged['active_time_2ds'] = ds_list[0]['active_time']
+                ds_merged['active_time_hvps'] = ds_list[1]['active_time']
+                        
+        return ds_merged
+                
+    def bulk_properties(self, calc_gamma_params=False, matched_objects=None):
+        """
+        Compute bulk microphysical properties from the PSD data.
+        
+        Parameters
+        ----------
+        calc_gamma_params: boolean
+            Optionally compute PSD N0, mu, lambda (takes some time)
+        matched_objects : impacts_tools.match.Radar() object or list of objects
+            Matched radar data to use in deriving a time-varying m-D relationship.
+        """
+        with np.errstate(divide='ignore', invalid='ignore'): # suppress divide by zero warnings
+            # initialize gamma fitting technique
+            x0 = [1.e-1, -1., 5.] # initial guess for N0 (cm-4), mu, lambda (cm-1)
+            
+            # number concentration (/L)
+            nt_temp = 1000. * (self.data['count'] / self.data['sv']).sum(dim='size')
+            
+            # spherical volume from Chase et al. (2018) [cm**3 / cm**3]
+            vol = (np.pi / 6.) * (
+                0.6 * ((self.data['bin_center'] / 10.) ** 3.) *
+                self.data['count'] / self.data['sv']
+            ).sum(dim='size')
+            
+            # number-weighted mean aspect and area ratio
+            ar_nw_temp = (
+                self.data['area_ratio'] * self.data['count']
+            ).sum(dim='size') / self.data['count'].sum(dim='size')
+            asr_nw_temp = (
+                self.data['aspect_ratio'] * self.data['count']
+            ).sum(dim='size') / self.data['count'].sum(dim='size')
+            
+            ## ===== Brown and Francis (1995) m-D products =====
+            mass_particle = (
+                0.00294 / 1.5) * (
+                self.data['bin_center'] / 10.
+            ) ** 1.9 # particle mass (g)
+            mass_bf = mass_particle * self.data['count'] # binned mass (g)
+            mass_rel_bf = mass_bf.cumsum(
+                dim='size') / mass_bf.cumsum(dim='size')[-1, :] # binned mass fraction
+            z_bf_temp = 1.e12 * (0.174 / 0.93) * (6. / np.pi / 0.934) ** 2 * (
+                mass_particle ** 2 * self.data['count'] / self.data['sv']
+            ).sum(dim='size') # simulated Z (mm^6 m^-3)
+            iwc_bf_temp = 10. ** 6 * (mass_bf / self.data['sv']).sum(dim='size') # IWC (g m-3)
+            dmm_bf_temp = self.data['bin_center'][(0.5 - mass_rel_bf).argmin(dim='size')] # med mass D (mm)
+            dm_bf_temp = 10. * (
+                (self.data['bin_center'] / 10.) * mass_bf /
+                self.data['sv']).sum(dim='size') / (
+                mass_bf / self.data['sv']
+            ).sum(dim='size') # mass-weighted mean D from Chase et al. (2020) (mm)
+            ar_bf_temp = (
+                self.data['area_ratio'] * mass_bf / self.data['sv']).sum(dim='size') / (
+                mass_bf / self.data['sv']
+            ).sum(dim='size') # mass-weighted mean area ratio
+            asr_bf_temp = (
+                self.data['aspect_ratio'] * mass_bf / self.data['sv']).sum(dim='size') / (
+                mass_bf / self.data['sv']
+            ).sum(dim='size') # mass-weighted mean aspect ratio
+            rhoe_bf_temp = (iwc_bf_temp / 10. ** 6) / vol # eff density from Chase et al. (2018) (g cm**-3)
+            
+            # optionally compute gamma fit params for each observation
+            if calc_gamma_params:
+                print('Computing gamma fit parameters will take some time.')
+                N0_bf_temp = -999. * np.ones(len(self.data.time))
+                mu_bf_temp = -999. * np.ones(len(self.data.time))
+                lam_bf_temp = -999. * np.ones(len(self.data.time))
+                for i in range(len(self.data.time)):
+                    if iwc_bf_temp[i] > 0: # only compute when there's a PSD
+                        sol = least_squares(
+                            self.calc_chisquare, x0, method='lm', ftol=1e-9, xtol=1e-9, max_nfev=int(1e6),
+                            args=(
+                                nt_temp[i], iwc_bf_temp[i], z_bf_temp[i], 0.00294 / 1.5, 1.9
+                            )
+                        ) # solve the gamma params using least squares minimziation
+                        N0_bf_temp[i] = sol.x[0]
+                        mu_bf_temp[i] = sol.x[1]
+                        lam_bf_temp[i] = sol.x[2]
+            
+            ## ===== Heymsfield et al. (2010; doi: 10.1175/2010JAS3507.1) m-D products =====
+            mass_particle = 0.00528 * (
+                self.data['bin_center'] / 10.
+            ) ** 2.1 # particle mass (g)
+            mass_hy = mass_particle * self.data['count'] # binned mass (g)
+            mass_rel_hy = mass_hy.cumsum(
+                dim='size') / mass_hy.cumsum(dim='size')[-1, :] # binned mass fraction
+            z_hy_temp = 1.e12 * (0.174 / 0.93) * (6. / np.pi / 0.934) ** 2 * (
+                mass_particle ** 2 * self.data['count'] / self.data['sv']
+            ).sum(dim='size') # simulated Z (mm^6 m^-3)
+            iwc_hy_temp = 10. ** 6 * (mass_hy / self.data['sv']).sum(dim='size') # IWC (g m-3)
+            dmm_hy_temp = self.data['bin_center'][(0.5 - mass_rel_hy).argmin(dim='size')] # med mass D (mm)
+            dm_hy_temp = 10. * (
+                (self.data['bin_center'] / 10.) * mass_hy /
+                self.data['sv']).sum(dim='size') / (
+                mass_hy / self.data['sv']
+            ).sum(dim='size') # mass-weighted mean D from Chase et al. (2020) (mm)
+            ar_hy_temp = (
+                self.data['area_ratio'] * mass_hy / self.data['sv']).sum(dim='size') / (
+                mass_hy / self.data['sv']
+            ).sum(dim='size') # mass-weighted mean area ratio
+            asr_hy_temp = (
+                self.data['aspect_ratio'] * mass_hy / self.data['sv']).sum(dim='size') / (
+                mass_hy / self.data['sv']
+            ).sum(dim='size') # mass-weighted mean aspect ratio
+            rhoe_hy_temp = (iwc_hy_temp / 10. ** 6) / vol # eff density from Chase et al. (2018) (g cm**-3)
+            
+            # optionally compute gamma fit params for each observation
+            if calc_gamma_params:
+                N0_hy_temp = -999. * np.ones(len(self.data.time))
+                mu_hy_temp = -999. * np.ones(len(self.data.time))
+                lam_hy_temp = -999. * np.ones(len(self.data.time))
+                for i in range(len(self.data.time)):
+                    if iwc_hy_temp[i] > 0: # only compute when there's a PSD
+                        sol = least_squares(
+                            self.calc_chisquare, x0, method='lm', ftol=1e-9, xtol=1e-9, max_nfev=int(1e6),
+                            args=(
+                                nt_temp[i], iwc_hy_temp[i], z_hy_temp[i], 0.00528, 2.1
+                            )
+                        ) # solve the gamma params using least squares minimziation
+                        N0_hy_temp[i] = sol.x[0]
+                        mu_hy_temp[i] = sol.x[1]
+                        lam_hy_temp[i] = sol.x[2]
+        
+        # mask bad gamma parameter values, or set to NaN if skipping
+        if calc_gamma_params:
+            N0_bf_temp = np.ma.masked_where(N0_bf_temp == -999., N0_bf_temp)
+            N0_hy_temp = np.ma.masked_where(N0_hy_temp == -999., N0_hy_temp)
+            mu_bf_temp = np.ma.masked_where(mu_bf_temp == -999., mu_bf_temp)
+            mu_hy_temp = np.ma.masked_where(mu_hy_temp == -999., mu_hy_temp)
+            lam_bf_temp = np.ma.masked_where(lam_bf_temp == -999., lam_bf_temp)
+            lam_hy_temp = np.ma.masked_where(lam_hy_temp == -999., lam_hy_temp)
+        else:
+            N0_bf_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
+            N0_hy_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
+            mu_bf_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
+            mu_hy_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
+            lam_bf_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
+            lam_hy_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
+            
+        # add bulk properties to PSD object
+        n = xr.DataArray(
+            data = nt_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Number concentration',
+                units = 'L-1')
+        )
+        ar_nw = xr.DataArray(
+            data = ar_nw_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Number-weighted mean area ratio (elliptical fit)',
+                units = '#')
+        )
+        asr_nw = xr.DataArray(
+            data = asr_nw_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Number-weighted mean aspect ratio (elliptical fit)',
+                units = '#')
+        )
+        N0_bf = xr.DataArray(
+            data = N0_bf_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='PSD intercept parameter [Baker and Lawson (1995) m-D relationship]',
+                relationship='m = 0.00196 * D ** 1.9',
+                units = 'cm-4')
+        )
+        mu_bf = xr.DataArray(
+            data = mu_bf_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='PSD shape parameter [Baker and Lawson (1995) m-D relationship]',
+                relationship='m = 0.00196 * D ** 1.9',
+                units = '#')
+        )
+        lam_bf = xr.DataArray(
+            data = lam_bf_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='PSD slope parameter [Baker and Lawson (1995) m-D relationship]',
+                relationship='m = 0.00196 * D ** 1.9',
+                units = 'cm-1')
+        )
+        iwc_bf = xr.DataArray(
+            data = iwc_bf_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Ice water content [Baker and Lawson (1995) m-D relationship]',
+                relationship='m = 0.00196 * D ** 1.9',
+                units = 'g m-3')
+        )
+        dm_bf = xr.DataArray(
+            data = dm_bf_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Mass-weighted mean diameter [Baker and Lawson (1995) m-D relationship]',
+                relationship='m = 0.00196 * D ** 1.9',
+                units = 'mm')
+        )
+        dmm_bf = xr.DataArray(
+            data = dmm_bf_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Median mass diameter [Baker and Lawson (1995) m-D relationship]',
+                relationship='m = 0.00196 * D ** 1.9',
+                units = 'mm')
+        )
+        ar_bf = xr.DataArray(
+            data = ar_bf_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Mass-weighted mean area ratio [Baker and Lawson (1995) m-D relationship]',
+                relationship='m = 0.00196 * D ** 1.9',
+                units = '#')
+        )
+        asr_bf = xr.DataArray(
+            data = asr_bf_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Mass-weighted mean aspect ratio [Baker and Lawson (1995) m-D relationship]',
+                relationship='m = 0.00196 * D ** 1.9',
+                units = '#')
+        )
+        rhoe_bf = xr.DataArray(
+            data = rhoe_bf_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Effective density [Baker and Lawson (1995) m-D relationship]',
+                relationship='m = 0.00196 * D ** 1.9',
+                units = 'g cm-3')
+        )
+        N0_hy = xr.DataArray(
+            data = N0_hy_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='PSD intercept parameter [Heymsfield et al. (2010) m-D relationship]',
+                relationship='m = 0.00528 * D ** 2.1',
+                units = 'cm-4')
+        )
+        mu_hy = xr.DataArray(
+            data = mu_hy_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='PSD shape parameter [Heymsfield et al. (2010) m-D relationship]',
+                relationship='m = 0.00528 * D ** 2.1',
+                units = '#')
+        )
+        lam_hy = xr.DataArray(
+            data = lam_hy_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='PSD slope parameter [Heymsfield et al. (2010) m-D relationship]',
+                relationship='m = 0.00528 * D ** 2.1',
+                units = 'cm-1')
+        )
+        iwc_hy = xr.DataArray(
+            data = iwc_hy_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Ice water content [Heymsfield et al. (2010) m-D relationship]',
+                relationship='m = 0.00528 * D ** 2.1',
+                units = 'g m-3')
+        )
+        dm_hy = xr.DataArray(
+            data = dm_hy_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Mass-weighted mean diameter [Heymsfield et al. (2010) m-D relationship]',
+                relationship='m = 0.00528 * D ** 2.1',
+                units = 'mm')
+        )
+        dmm_hy = xr.DataArray(
+            data = dmm_hy_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Median mass diameter [Heymsfield et al. (2010) m-D relationship]',
+                relationship='m = 0.00528 * D ** 2.1',
+                units = 'mm')
+        )
+        ar_hy = xr.DataArray(
+            data = ar_hy_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Mass-weighted mean area ratio [Heymsfield et al. (2010) m-D relationship]',
+                relationship='m = 0.00528 * D ** 2.1',
+                units = '#')
+        )
+        asr_hy = xr.DataArray(
+            data = asr_hy_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Mass-weighted mean aspect ratio [Heymsfield et al. (2010) m-D relationship]',
+                relationship='m = 0.00528 * D ** 2.1',
+                units = '#')
+        )
+        rhoe_hy = xr.DataArray(
+            data = rhoe_hy_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Effective density [Heymsfield et al. (2010) m-D relationship]',
+                relationship='m = 0.00528 * D ** 2.1',
+                units = 'g cm-3')
+        )
+        
+        # put bulk properties together into an XArray DataSet
+        ds = xr.Dataset(
+            data_vars={
+                'n': n,
+                'N0_bf': N0_bf,
+                'N0_hy': N0_hy,
+                'mu_bf': mu_bf,
+                'mu_hy': mu_hy,
+                'lambda_bf': lam_bf,
+                'lambda_hy': lam_hy,
+                'iwc_bf': iwc_bf,
+                'iwc_hy': iwc_hy,
+                'dm_bf': dm_bf,
+                'dm_hy': dm_hy,
+                'dmm_bf': dmm_bf,
+                'dmm_hy': dmm_hy,
+                'rhoe_bf': rhoe_bf,
+                'rhoe_hy': rhoe_hy,
+                'area_ratio_mean_n': ar_nw,
+                'area_ratio_mean_bf': ar_bf,
+                'area_ratio_mean_hy': ar_hy,
+                'aspect_ratio_mean_n': asr_nw,
+                'aspect_ratio_mean_bf': asr_bf,
+                'aspect_ratio_mean_hy': asr_hy
+            },
+            coords={
+                'time': self.data.time
+            }
+        )
+        if not calc_gamma_params: # remove gamma params if skipping calculation
+            ds = ds.drop_vars(
+                ['N0_bf', 'mu_bf', 'lambda_bf', 'N0_hy', 'mu_hy', 'lambda_hy']
+            )
+        
+        ds_merged = xr.merge(
+            [self.data, ds], combine_attrs='drop_conflicts'
+        ).transpose('habit', 'size', 'time')
+        
+        return ds_merged
+    
+    def calc_chisquare(
+            self, x, n, iwc, z, a, b, rime_ind=None, exponential=False):
+        '''
+        Compute gamma fit parameters for the PSD.
+        Follows McFarquhar et al. (2015) by finding N0-mu-lambda minimizing zeroth
+        (Nt), second (mass), fourth (reflectivity) moments of ice phase PSD.
+        Inputs:
+            x: N0, mu, lambda to test on the minimization procedure
+            n: Measured number concentration (L-1)
+            iwc: Measured IWC using an assumed m-D relation (g m-3)
+            z: Measured Z following Hogan et al. (2012) using assumed m-D relation (mm6 m-3)
+            a: Prefactor component to the assumed m-D reltation [cm**-b]
+            b: Exponent component to the assumed m-D reltation
+            rime_ind (optional, for LS products only): Riming category index to use for the reflectivity moment
+            exponential: Boolean, True if setting mu=0 for the fit (exponential form)
+        Outputs:
+            chi_square: Chi-square value for the provided N0-mu-lambda configuration
+        '''
+        Dmax = self.data['bin_center'] / 10. # particle size (cm)
+        dD = self.data['bin_width'] # bin width (cm)
+        mass_particle = a * Dmax ** b # binned particle mass (g)
+
+        if exponential: # exponential form with mu=0
+            ND_fit = x[0] * np.exp(-x[2] * Dmax)
+        else: # traditional gamma function with variable mu
+            ND_fit = x[0] * Dmax ** x[1] * np.exp(-x[2] * Dmax)
+
+        n_fit = 1000.*np.nansum(ND_fit*dD) # concentration from fit PSD (L-1)
+        iwc_fit = 10. ** 6  * np.nansum(
+            mass_particle* ND_fit * dD
+        ) # IWC from fit PSD (g m**-3)
+        if rime_ind is not None:
+            Z_fit = forward_Z() #initialize class
+            Z_fit.set_PSD(PSD=ND_fit[np.newaxis,:]*10.**8, D=Dmax/100., dD=dD/100., Z_interp=True) # get the PSD in the format to use in the routine (mks units)
+            Z_fit.load_split_L15() # Load the leinonen output
+            Z_fit.fit_sigmas(Z_interp=True) # Fit the backscatter cross-sections
+            Z_fit.calc_Z() # Calculate Z...outputs are Z.Z_x, Z.Z_ku, Z.Z_ka, Z.Z_w for the four radar wavelengths
+            z_fit = 10.**(Z_fit.Z_x[0, rime_ind] / 10.) # mm**6 m**-3
+        else:
+            z_fit = 1.e12 * (0.174 / 0.93) * (6. / np.pi / 0.934) ** 2 * np.nansum(
+                mass_particle ** 2 * ND_fit * dD
+            ) # Z from fit PSD (mm6 m-3)
+
+        # compute 3-element (1 per moment) chi-square value
+        csq_Nt = ((n - n_fit) / np.sqrt(n * n_fit)) ** 2
+        csq_iwc = ((iwc - iwc_fit) / np.sqrt(iwc * iwc_fit)) ** 2
+        csq_z = ((z - z_fit) / np.sqrt(z * z_fit)) ** 2
+        chi_square = [csq_Nt, csq_iwc, csq_z]
+
+        return chi_square
+
+    def hhmmss2dt(self, time_hhmmss: int, date: str):
+        """
+        If you have date as an integer, use this method to obtain a datetime.date object.
+
+        Parameters
+        ----------
+        time_hhmmss : int
+          Time as a regular integer value in HHMMSS (example: 235959).
+        date        : str
+          Date of flight start.
+
+        Returns
+        -------
+        dt          : np.array(dtype='datetime64[s]')
+          A datetime object which corresponds to the given value `time_hhmmss`.
+        """
+        year = np.tile(int(date[:4]), (len(time_hhmmss)))
+        month = np.tile(int(date[:5:7]), (len(time_hhmmss)))
+        day = np.tile(int(date[8:]), (len(time_hhmmss)))
+        hour = (time_hhmmss / 10000).astype(int)
+        minute = ((time_hhmmss % 10000) / 100).astype(int)
+        second = (time_hhmmss % 100).astype(int)
+
+        if len(np.where(np.diff(hour) < 0)[0]) > 0:
+            hour[np.where(np.diff(hour) < 0)[0][0] + 1:] += 24
+
+        df = pd.DataFrame(
+            {
+                'year': year,
+                'month': month,
+                'day': day,
+                'hour': hour,
+                'minute': minute,
+                'second': second
+            }
+        )
+        dt = pd.to_datetime(df).to_numpy().astype('datetime64[s]')
+
+        return dt
