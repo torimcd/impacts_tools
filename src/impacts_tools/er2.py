@@ -132,7 +132,25 @@ class Radar(ABC):
 
         # np.isfinite returns values that are not NAN or INF
         return data_array.where(np.isfinite(temp_datafiltered))
-            
+    
+    def resample(self, data_reference):
+        """
+        Resample the CRS or EXRAD cross section to the HIWRAP time-range grid
+        
+        Parameters
+        ----------
+        data_reference : impacts_tools.er2.Radar()
+            The radar object to use as the time-range reference grid (e.g., er2.Hiwrap())
+        """
+        # remove beams (time dim) that aren't in HIWRAP data (typically every other beam)
+        self.data = self.data.sel(time=data_reference.data.time)
+        
+        # find nearest CRS/EXRAD gate corresponding to HIWRAP range gates
+        # CRS/EXRAD height may be offset by 20-25 m (vertical sampling resolution)
+        # not a big deal as native vertical resolution much larger (> 100 m )
+        return self.data.interp(
+            range=data_reference.data.range, method='nearest', assume_sorted=True
+        )
     
     def calc_cfad(self, vel_bins=None, alt_bins=None, band=None):
         """
@@ -268,14 +286,15 @@ class Crs(Radar):
  
     """
 
-    def __init__(self, filepath, start_time=None, end_time=None, atten_file=None, max_roll=None, 
-        dbz_sigma=None, vel_sigma=None, width_sigma=None, ldr_sigma=None, dbz_min=None, vel_min=None, width_min=None):
+    def __init__(self, filepath, start_time=None, end_time=None, atten_file=None, dataset='2020', max_roll=None, 
+        dbz_sigma=None, vel_sigma=None, width_sigma=None, ldr_sigma=None, dbz_min=None, vel_min=None, width_min=None,
+        resample_ref=None, temperature=None):
 
     
         self.name = 'CRS'
 
         # read the raw data
-        self.data = self.readfile(filepath, start_time, end_time)
+        self.data = self.readfile(filepath, start_time, end_time, dataset)
         """
         xarray.Dataset of radar variables and attributes
 
@@ -340,10 +359,16 @@ class Crs(Radar):
         
         if ldr_sigma is not None:
             self.data['ldr'] = self.despeckle(self.data['ldr'], ldr_sigma)
+            
+        if (resample_ref is not None) and (temperature is not None):
+            self.data = self.resample(resample_ref)
+            self.data = self.correct_ice_atten(resample_ref, temperature)
+        elif resample_ref is not None:
+            self.data = self.resample(resample_ref)
 
 
 
-    def readfile(self, filepath, start_time=None, end_time=None):
+    def readfile(self, filepath, start_time=None, end_time=None, dataset='2020'):
         """
         Reads the CRS data file and unpacks the fields into an xarray.Dataset
 
@@ -356,6 +381,8 @@ class Crs(Radar):
             The initial time of interest
         end_time : np.datetime64 or None
             The final time of interest
+        dataset  : str
+            Four-digit deployment year for handling radar variables/metadata
         
         Returns
         -------
@@ -378,12 +405,16 @@ class Crs(Radar):
 
 
         # Aircraft nav information
+        if dataset=='2020': # metadata key misspelled in 2020 dataset
+            description_str = 'NominalDistance_desciption'
+        else:# metadata key spelling fixed in 2022 dataset
+            description_str = 'NominalDistance_description'
         nomdist = xr.DataArray(
             data = hdf['Navigation']['Data']['NominalDistance'][:],
             dims = ["time"],
             coords = dict(time=time_dt64),
             attrs = dict(
-                description=hdf['Navigation']['Information']['NominalDistance_desciption'][0].decode('UTF-8'),
+                description=hdf['Navigation']['Information'][description_str][0].decode('UTF-8'),
                 units = hdf['Navigation']['Information']['NominalDistance_units'][0].decode('UTF-8')
             )
         )
@@ -629,8 +660,13 @@ class Crs(Radar):
                 ) 
             )
         
+        if hdf['Products']['Information']['AircraftMotion'][:].ndim > 1: # this was a 2D var in some 2020 data
+            ac_mot_data = hdf['Products']['Information']['AircraftMotion'][:,0]
+        else: # this is a 1D var for most datasets
+            ac_mot_data = hdf['Products']['Information']['AircraftMotion'][:]
+            
         aircraft_motion = xr.DataArray(
-            data = hdf['Products']['Information']['AircraftMotion'][:,0],
+            data = ac_mot_data,
             dims = ["time"],
             coords = dict(
                 time = time_dt64,
@@ -692,7 +728,10 @@ class Crs(Radar):
         L1A_ProcessDate = hdf['Information']['L1A_ProcessDate'][0].decode('UTF-8')
         L1B_ProcessDate = hdf['Information']['L1B_ProcessDate'][0].decode('UTF-8')
         L1B_Revision = hdf['Information']['L1B_Revision'][0].decode('UTF-8')
-        L1B_Revision_Note = hdf['Information']['L1B_Revision_Note'][0].decode('UTF-8')
+        if isinstance(hdf['Information']['L1B_Revision_Note'][0], np.float64): # for nan as notes
+            L1B_Revision_Note = str(hdf['Information']['L1B_Revision_Note'][0])
+        else: # for str as notes
+            L1B_Revision_Note = hdf['Information']['L1B_Revision_Note'][0].decode('UTF-8')
         missionPI = hdf['Information']['MissionPI'][0].decode('UTF-8')
         radar_name = hdf['Information']['RadarName'][0].decode('UTF-8')
         antenna_beamwidth = hdf['Products']['Information']['AntennaBeamwidth'][0]
@@ -765,12 +804,79 @@ class Crs(Radar):
 
         return ds
 
+    def correct_ice_atten(self, hiwrap, data_temperature=None):
+        """
+        Compute the 2-way path integrated attenuation due to ice scattering and
+        correct the W-band reflectivity.
+        
+        Parameters
+        ----------
+        hiwrap       : impacts_tools.er2.Hiwrap() object
+            The object obtained by running impacts_tools.er2.Hiwrap()
+        data_temperature : xr.DataArray() or None
+            The temperature field to optionally ignore correction >= 0C [deg C]
+        
+        Returns
+        -------
+        self.data['kw_ice'] : xr.DataArray()
+            Two-way path integrated attenuation due to ice scattering [dB]
+        """
+        # fit Kulie et al. (2014) relationship to a Z_ku-dependent func
+        dbz_ku_lin = np.array([0., 2000., 4000., 6000., 8000.]) # mm**6 / m**-3
+        ks_w_coeff = np.array([0., 7.5, 15.5, 23.75, 31.5]) # db / km
+        ks_w_func = np.poly1d(
+            np.polyfit(dbz_ku_lin, ks_w_coeff, deg=1)
+        ) # slope, intercept coeffs
+        
+        # calculate attenuation (k) per gate and clean up data
+        data_dbz_ku = hiwrap.data.dbz_ku.values
+        ks_w = ks_w_func(10. ** (data_dbz_ku / 10.)) # db / km
+        ks_w = ks_w * 0.0265 # convert to db per gate
+        if data_temperature is None: # clean up k values except for T > 0C
+            ks_w[(np.isnan(data_dbz_ku)) | (data_dbz_ku > 40.)] = 0.
+        else: # clean up k values, including when T > 0C
+            ks_w[
+                (np.isnan(data_dbz_ku)) | (data_dbz_ku > 40.) |
+                (data_temperature >= 0.)] = 0.
+        ks_w[(np.isnan(ks_w)) | (ks_w < 0.)] = 0. # change nan and negative vals to 0
 
-    def correct_ice_atten(self, hiwrap, hrrr):
-        pass
+        # calculate two-way path integrated attenuation from the per gate k
+        ks_w = np.ma.array(2. * np.cumsum(ks_w, axis=(0)))
+        
+        # add attenuation to dataset (diagnostic)
+        kw_ice = xr.full_like(self.data.dbz, 0.)
+        kw_ice.data = ks_w
+        kw_ice.attrs['description'] = (
+            '2-way path integrated attenuation from ice scattering '
+            'using k-Z_Ku relationship'
+        )
+        kw_ice.attrs['units'] = 'dB'
+        self.data['kw_ice'] = kw_ice
+
+        # correct W-band Z
+        self.data['dbz'].values += self.data['kw_ice'].values
+        
+        return self.data
 
     def correct_attenuation(self, atten_file):
-        pass
+        """
+        Correct reflectivity for attenuation at W-band due to atmospheric gases and LWC.
+
+        Parameters
+        ----------
+
+        atten_file : str
+            filepath to attenuation data
+
+        """
+        # open the attentuation file and trim to match radar beams
+        atten_data = xr.open_dataset(atten_file).sel(time=self.data.time)
+
+        # add the correction to the reflectivity values
+        self.data['dbz'].values += atten_data['k_w'].values # gases
+        self.data['dbz'].values += atten_data['k_w_l'].values # LWC
+        
+        #return self.data['dbz'].values
 
 
 
@@ -785,8 +891,8 @@ class Hiwrap(Radar):
 
     Parameters
     ----------
-    filepath: str
-        File path to the CRS data file
+    filepath(s): str
+        File path to the HIWRAP data file (files for 2022 deployment)
     start_time: np.datetime64 or None
         The initial time of interest eg. if looking at a single flight leg
     end_time: np.datetime64 or None
@@ -813,14 +919,14 @@ class Hiwrap(Radar):
                 
     """
 
-    def __init__(self, filepath, start_time=None, end_time=None, atten_file=None, max_roll=None, 
+    def __init__(self, filepath, start_time=None, end_time=None, atten_file=None, dataset='2020', max_roll=None, 
                 dbz_sigma=None, vel_sigma=None, width_sigma=None, 
                 dbz_min=None, vel_min=None, width_min=None):
     
         self.name = 'HIWRAP'
 
         # create a dataset with both ka- and ku-band data
-        self.data = self.readfile(filepath, start_time=start_time, end_time=end_time)
+        self.data = self.readfile(filepath, start_time, end_time, dataset)
         """
         xarray.Dataset of radar variables and attributes
 
@@ -894,7 +1000,7 @@ class Hiwrap(Radar):
             self.mask_roll(max_roll)
 
 
-    def readfile(self, filepath, start_time=None, end_time=None):
+    def readfile(self, filepath, start_time=None, end_time=None, dataset='2020'):
         """
         Reads the HIWRAP data file and unpacks the fields into an xarray.Dataset
 
@@ -902,11 +1008,13 @@ class Hiwrap(Radar):
         ----------
 
         filepath : str
-            Path to the data file
+            Path to the data file (tuple of str for 2022 HIWRAP Ku- and Ka-bands)
         start_time : np.datetime64 or None
             The initial time of interest
         end_time : np.datetime64 or None
             The final time of interest
+        dataset  : str
+            Four-digit deployment year for handling radar variables/metadata
         
         Returns
         -------
@@ -915,26 +1023,45 @@ class Hiwrap(Radar):
         """
 
         # open the file
-        hdf = h5py.File(filepath, 'r')
+        if dataset=='2020': # Ku- and Ka-band products in one file
+            hdf = h5py.File(filepath, 'r')
+        else: # Ku- and Ka-band products in two files
+            hdf = h5py.File(filepath[0], 'r') # Ku-band
+            hdf2 = h5py.File(filepath[1], 'r') # Ka-band
 
         # Time information -- this is the first dimension in nav coords and products
         time_raw = hdf['Time']['Data']['TimeUTC'][:]
         time_dt = [datetime(1970, 1, 1) + timedelta(seconds=time_raw[i]) for i in range(len(time_raw))] # Python datetime object
         time_dt64 = np.array(time_dt, dtype='datetime64[ms]') # Numpy datetime64 object (e.g., for plotting)
 
-
         if start_time is not None:
             time_inds = np.where((time_dt64>=start_time) & (time_dt64<=end_time))[0]
         else:
             time_inds = np.where((time_dt64 != None))[0]
+            
+        # Time information for Ka-band data from 2022 deployment (separate file)
+        if dataset=='2022':
+            time2_raw = hdf2['Time']['Data']['TimeUTC'][:]
+            time2_dt = [
+                datetime(1970, 1, 1) + timedelta(seconds=time2_raw[i])
+                for i in range(len(time2_raw))
+            ] # Python datetime object
+            time2_dt64 = np.array(
+                time2_dt, dtype='datetime64[ms]'
+            ) # Numpy datetime64 object (e.g., for plotting)
+            ka_inds = np.isin(time2_dt64, time_dt64) # find HIWRAP Ka-band time indices common to Ku-band
 
         # Aircraft nav information
+        if dataset=='2020': # metadata key misspelled in 2020 dataset
+            description_str = 'NominalDistance_desciption'
+        else:# metadata key spelling fixed in 2022 dataset
+            description_str = 'NominalDistance_description'
         nomdist = xr.DataArray(
             data = hdf['Navigation']['Data']['NominalDistance'][:],
             dims = ["time"],
             coords = dict(time=time_dt64),
             attrs = dict(
-                description=hdf['Navigation']['Information']['NominalDistance_desciption'][0].decode('UTF-8'),
+                description=hdf['Navigation']['Information'][description_str][0].decode('UTF-8'),
                 units = hdf['Navigation']['Information']['NominalDistance_units'][0].decode('UTF-8')
             )
         )
@@ -1114,8 +1241,16 @@ class Hiwrap(Radar):
             )
         )
 
+        if dataset=='2020': # for files with combined Ku- and Ka-band data
+            data_var = hdf['Products']['Ka']['Combined']['Data']['dBZe'][:].T
+            description_var = hdf['Products']['Ka']['Combined']['Information']['dBZe_description'][0].decode('UTF-8')
+            units_var = hdf['Products']['Ka']['Combined']['Information']['dBZe_units'][0].decode('UTF-8')
+        else:
+            data_var = hdf2['Products']['Combined']['Data']['dBZe'][ka_inds, :].T
+            description_var = hdf2['Products']['Combined']['Information']['dBZe_description'][0].decode('UTF-8')
+            units_var = hdf2['Products']['Combined']['Information']['dBZe_units'][0].decode('UTF-8')
         dbz_ka = xr.DataArray(
-            data = hdf['Products']['Ka']['Combined']['Data']['dBZe'][:].T,
+            data = data_var,
             dims = ["range", "time"],
             coords = dict(
                 range = radar_range,
@@ -1125,13 +1260,21 @@ class Hiwrap(Radar):
                 lat = lat,
                 lon = lon),
             attrs = dict(
-                description=hdf['Products']['Ka']['Combined']['Information']['dBZe_description'][0].decode('UTF-8'),
-                units = hdf['Products']['Ka']['Combined']['Information']['dBZe_units'][0].decode('UTF-8')
+                description = description_var,
+                units = units_var
             )   
         )
 
+        if dataset=='2020': # for files with combined Ku- and Ka-band data
+            data_var = hdf['Products']['Ku']['Combined']['Data']['dBZe'][:].T
+            description_var = hdf['Products']['Ku']['Combined']['Information']['dBZe_description'][0].decode('UTF-8')
+            units_var = hdf['Products']['Ku']['Combined']['Information']['dBZe_units'][0].decode('UTF-8')
+        else:
+            data_var = hdf['Products']['Combined']['Data']['dBZe'][:].T
+            description_var = hdf['Products']['Combined']['Information']['dBZe_description'][0].decode('UTF-8')
+            units_var = hdf['Products']['Combined']['Information']['dBZe_units'][0].decode('UTF-8')
         dbz_ku = xr.DataArray(
-            data = hdf['Products']['Ku']['Combined']['Data']['dBZe'][:].T,
+            data = data_var,
             dims = ["range", "time"],
             coords = dict(
                 range = radar_range,
@@ -1141,13 +1284,21 @@ class Hiwrap(Radar):
                 lat = lat,
                 lon = lon),
             attrs = dict(
-                description=hdf['Products']['Ku']['Combined']['Information']['dBZe_description'][0].decode('UTF-8'),
-                units = hdf['Products']['Ku']['Combined']['Information']['dBZe_units'][0].decode('UTF-8')
+                description = description_var,
+                units = units_var
             )   
         )
 
+        if dataset=='2020': # for files with combined Ku- and Ka-band data
+            data_var = np.ma.masked_invalid(hdf['Products']['Ka']['Combined']['Data']['SpectrumWidth'][:].T)
+            description_var = hdf['Products']['Ka']['Combined']['Information']['SpectrumWidth_description'][0].decode('UTF-8')
+            units_var = hdf['Products']['Ka']['Combined']['Information']['SpectrumWidth_units'][0].decode('UTF-8')
+        else:
+            data_var = np.ma.masked_invalid(hdf2['Products']['Combined']['Data']['SpectrumWidth'][ka_inds, :].T)
+            description_var = hdf2['Products']['Combined']['Information']['SpectrumWidth_description'][0].decode('UTF-8')
+            units_var = hdf2['Products']['Combined']['Information']['SpectrumWidth_units'][0].decode('UTF-8')
         width_ka = xr.DataArray(
-            data = np.ma.masked_invalid(hdf['Products']['Ka']['Combined']['Data']['SpectrumWidth'][:].T),
+            data = data_var,
             dims = ["range", "time"],
             coords = dict(
                 range = radar_range,
@@ -1157,12 +1308,21 @@ class Hiwrap(Radar):
                 lat = lat,
                 lon = lon),
             attrs = dict(
-                description=hdf['Products']['Ka']['Combined']['Information']['SpectrumWidth_description'][0].decode('UTF-8'),
-                units = hdf['Products']['Ka']['Combined']['Information']['SpectrumWidth_units'][0].decode('UTF-8')
+                description = description_var,
+                units = units_var
             ) 
         )
+        
+        if dataset=='2020': # for files with combined Ku- and Ka-band data
+            data_var = np.ma.masked_invalid(hdf['Products']['Ku']['Combined']['Data']['SpectrumWidth'][:].T)
+            description_var = hdf['Products']['Ku']['Combined']['Information']['SpectrumWidth_description'][0].decode('UTF-8')
+            units_var = hdf['Products']['Ku']['Combined']['Information']['SpectrumWidth_units'][0].decode('UTF-8')
+        else:
+            data_var = np.ma.masked_invalid(hdf['Products']['Combined']['Data']['SpectrumWidth'][:].T)
+            description_var = hdf['Products']['Combined']['Information']['SpectrumWidth_description'][0].decode('UTF-8')
+            units_var = hdf['Products']['Combined']['Information']['SpectrumWidth_units'][0].decode('UTF-8')
         width_ku = xr.DataArray(
-            data = np.ma.masked_invalid(hdf['Products']['Ku']['Combined']['Data']['SpectrumWidth'][:].T),
+            data = data_var,
             dims = ["range", "time"],
             coords = dict(
                 range = radar_range,
@@ -1172,13 +1332,21 @@ class Hiwrap(Radar):
                 lat = lat,
                 lon = lon),
             attrs = dict(
-                description=hdf['Products']['Ku']['Combined']['Information']['SpectrumWidth_description'][0].decode('UTF-8'),
-                units = hdf['Products']['Ku']['Combined']['Information']['SpectrumWidth_units'][0].decode('UTF-8')
+                description = description_var,
+                units = units_var
             ) 
         )
 
+        if dataset=='2020': # for files with combined Ku- and Ka-band data
+            data_var = np.ma.masked_invalid(hdf['Products']['Ka']['Combined']['Data']['LDR'][:].T)
+            description_var = hdf['Products']['Ka']['Combined']['Information']['LDR_description'][0].decode('UTF-8')
+            units_var = hdf['Products']['Ka']['Combined']['Information']['LDR_units'][0].decode('UTF-8')
+        else:
+            data_var = np.ma.masked_invalid(hdf2['Products']['Combined']['Data']['LDR'][ka_inds, :].T)
+            description_var = hdf2['Products']['Combined']['Information']['LDR_description'][0].decode('UTF-8')
+            units_var = hdf2['Products']['Combined']['Information']['LDR_units'][0].decode('UTF-8')
         ldr_ka = xr.DataArray(
-            data = np.ma.masked_invalid(hdf['Products']['Ka']['Combined']['Data']['LDR'][:].T),
+            data = data_var,
             dims = ["range", "time"],
             coords = dict(
                 range = radar_range,
@@ -1188,12 +1356,21 @@ class Hiwrap(Radar):
                 lat = lat,
                 lon = lon),
             attrs = dict(
-                description=hdf['Products']['Ka']['Combined']['Information']['LDR_description'][0].decode('UTF-8'),
-                units = hdf['Products']['Ka']['Combined']['Information']['LDR_units'][0].decode('UTF-8')
+                description = description_var,
+                units = units_var
             ) 
         )
+        
+        if dataset=='2020': # for files with combined Ku- and Ka-band data
+            data_var = np.ma.masked_invalid(hdf['Products']['Ku']['Combined']['Data']['LDR'][:].T)
+            description_var = hdf['Products']['Ku']['Combined']['Information']['LDR_description'][0].decode('UTF-8')
+            units_var = hdf['Products']['Ku']['Combined']['Information']['LDR_units'][0].decode('UTF-8')
+        else:
+            data_var = np.ma.masked_invalid(hdf['Products']['Combined']['Data']['LDR'][:].T)
+            description_var = hdf['Products']['Combined']['Information']['LDR_description'][0].decode('UTF-8')
+            units_var = hdf['Products']['Combined']['Information']['LDR_units'][0].decode('UTF-8')
         ldr_ku = xr.DataArray(
-            data = np.ma.masked_invalid(hdf['Products']['Ku']['Combined']['Data']['LDR'][:].T),
+            data = data_var,
             dims = ["range", "time"],
             coords = dict(
                 range = radar_range,
@@ -1203,15 +1380,31 @@ class Hiwrap(Radar):
                 lat = lat,
                 lon = lon),
             attrs = dict(
-                description=hdf['Products']['Ku']['Combined']['Information']['LDR_description'][0].decode('UTF-8'),
-                units = hdf['Products']['Ku']['Combined']['Information']['LDR_units'][0].decode('UTF-8')
+                description = description_var,
+                units = units_var
             ) 
         )
 
-        if 'Velocity_corrected' in list(hdf['Products']['Ka']['Combined']['Data'].keys()):
+        # get list of Ku- and Ka- variables
+        if dataset=='2020':
+            ka_prods = list(hdf['Products']['Ka']['Combined']['Data'].keys())
+            ku_prods = list(hdf['Products']['Ku']['Combined']['Data'].keys())
+        else:
+            ka_prods = list(hdf2['Products']['Combined']['Data'].keys())
+            ku_prods = list(hdf['Products']['Combined']['Data'].keys())
+            
+        if 'Velocity_corrected' in ka_prods:
             # for NUBF correction
+            if dataset=='2020': # for files with combined Ku- and Ka-band data
+                data_var = hdf['Products']['Ka']['Combined']['Data']['Velocity_corrected'][:].T
+                description_var = hdf['Products']['Ka']['Combined']['Information']['Velocity_corrected_description'][0].decode('UTF-8')
+                units_var = hdf['Products']['Ka']['Combined']['Information']['Velocity_corrected_units'][0].decode('UTF-8')
+            else:
+                data_var = hdf2['Products']['Combined']['Data']['Velocity_corrected'][ka_inds, :].T
+                description_var = hdf2['Products']['Combined']['Information']['Velocity_corrected_description'][0].decode('UTF-8')
+                units_var = hdf2['Products']['Combined']['Information']['Velocity_corrected_units'][0].decode('UTF-8')
             vel_ka = xr.DataArray(
-                data = hdf['Products']['Ka']['Combined']['Data']['Velocity_corrected'][:].T,
+                data = data_var,
                 dims = ["range", "time"],
                 coords = dict(
                     range = radar_range,
@@ -1221,13 +1414,21 @@ class Hiwrap(Radar):
                     lat = lat,
                     lon = lon),
                 attrs = dict(
-                    description=hdf['Products']['Ka']['Combined']['Information']['Velocity_corrected_description'][0].decode('UTF-8'),
-                    units = hdf['Products']['Ka']['Combined']['Information']['Velocity_corrected_units'][0].decode('UTF-8')
+                    description = description_var,
+                    units = units_var
                 ) 
             )
         else:
+            if dataset=='2020': # for files with combined Ku- and Ka-band data
+                data_var = hdf['Products']['Ka']['Combined']['Data']['Velocity'][:].T
+                description_var = hdf['Products']['Ka']['Combined']['Information']['Velocity_description'][0].decode('UTF-8')
+                units_var = hdf['Products']['Ka']['Combined']['Information']['Velocity_units'][0].decode('UTF-8')
+            else:
+                data_var = hdf2['Products']['Combined']['Data']['Velocity'][ka_inds, :].T
+                description_var = hdf2['Products']['Combined']['Information']['Velocity_description'][0].decode('UTF-8')
+                units_var = hdf2['Products']['Combined']['Information']['Velocity_units'][0].decode('UTF-8')
             vel_ka = xr.DataArray(
-                data = hdf['Products']['Ka']['Combined']['Data']['Velocity'][:].T,
+                data = data_var,
                 dims = ["range", "time"],
                 coords = dict(
                     range = radar_range,
@@ -1237,15 +1438,23 @@ class Hiwrap(Radar):
                     lat = lat,
                     lon = lon),
                 attrs = dict(
-                    description=hdf['Products']['Ka']['Combined']['Information']['Velocity_description'][0].decode('UTF-8'),
-                    units = hdf['Products']['Ka']['Combined']['Information']['Velocity_units'][0].decode('UTF-8')
+                    description = description_var,
+                    units = units_var
                 ) 
             )
 
-        if 'Velocity_corrected' in list(hdf['Products']['Ku']['Combined']['Data'].keys()):
+        if 'Velocity_corrected' in ku_prods:
             # for NUBF correction
+            if dataset=='2020': # for files with combined Ku- and Ka-band data
+                data_var = hdf['Products']['Ku']['Combined']['Data']['Velocity_corrected'][:].T
+                description_var = hdf['Products']['Ku']['Combined']['Information']['Velocity_corrected_description'][0].decode('UTF-8')
+                units_var = hdf['Products']['Ku']['Combined']['Information']['Velocity_corrected_units'][0].decode('UTF-8')
+            else:
+                data_var = hdf['Products']['Combined']['Data']['Velocity_corrected'][:].T
+                description_var = hdf['Products']['Combined']['Information']['Velocity_corrected_description'][0].decode('UTF-8')
+                units_var = hdf['Products']['Combined']['Information']['Velocity_corrected_units'][0].decode('UTF-8')
             vel_ku = xr.DataArray(
-                data = hdf['Products']['Ku']['Combined']['Data']['Velocity_corrected'][:].T,
+                data = data_var,
                 dims = ["range", "time"],
                 coords = dict(
                     range = radar_range,
@@ -1255,13 +1464,21 @@ class Hiwrap(Radar):
                     lat = lat,
                     lon = lon),
                 attrs = dict(
-                    description=hdf['Products']['Ku']['Combined']['Information']['Velocity_corrected_description'][0].decode('UTF-8'),
-                    units = hdf['Products']['Ku']['Combined']['Information']['Velocity_corrected_units'][0].decode('UTF-8')
+                    description = description_var,
+                    units = units_var
                 ) 
             )
         else:
+            if dataset=='2020': # for files with combined Ku- and Ka-band data
+                data_var = hdf['Products']['Ku']['Combined']['Data']['Velocity'][:].T
+                description_var = hdf['Products']['Ku']['Combined']['Information']['Velocity_description'][0].decode('UTF-8')
+                units_var = hdf['Products']['Ku']['Combined']['Information']['Velocity_units'][0].decode('UTF-8')
+            else:
+                data_var = hdf['Products']['Combined']['Data']['Velocity'][:].T
+                description_var = hdf['Products']['Combined']['Information']['Velocity_description'][0].decode('UTF-8')
+                units_var = hdf['Products']['Combined']['Information']['Velocity_units'][0].decode('UTF-8')
             vel_ku = xr.DataArray(
-                data = hdf['Products']['Ku']['Combined']['Data']['Velocity'][:].T,
+                data = data_var,
                 dims = ["range", "time"],
                 coords = dict(
                     range = radar_range,
@@ -1271,13 +1488,17 @@ class Hiwrap(Radar):
                     lat = lat,
                     lon = lon),
                 attrs = dict(
-                    description=hdf['Products']['Ku']['Combined']['Information']['Velocity_description'][0].decode('UTF-8'),
-                    units = hdf['Products']['Ku']['Combined']['Information']['Velocity_units'][0].decode('UTF-8')
+                    description = description_var,
+                    units = units_var
                 ) 
             )
         
+        if hdf['Products']['Information']['AircraftMotion'][:].ndim > 1: # this was a 2D var in some 2020 data
+            ac_mot_data = hdf['Products']['Information']['AircraftMotion'][:,0]
+        else: # this is a 1D var for most datasets
+            ac_mot_data = hdf['Products']['Information']['AircraftMotion'][:]
         aircraft_motion = xr.DataArray(
-            data = hdf['Products']['Information']['AircraftMotion'][:],
+            data = ac_mot_data,
             dims = ["time"],
             coords = dict(
                 time = time_dt64,
@@ -1290,8 +1511,14 @@ class Hiwrap(Radar):
             ) 
         )
 
+        if dataset=='2020': # for files with combined Ku- and Ka-band data
+            data_var = hdf['Products']['Ka']['Combined']['Information']['ChannelMask'][:].T
+            description_var = hdf['Products']['Ka']['Combined']['Information']['ChannelMask_description'][0].decode('UTF-8')
+        else:
+            data_var = hdf2['Products']['Combined']['Information']['ChannelMask'][ka_inds, :].T
+            description_var = hdf2['Products']['Combined']['Information']['ChannelMask_description'][0].decode('UTF-8')
         channel_mask_ka = xr.DataArray(
-            data = hdf['Products']['Ka']['Combined']['Information']['ChannelMask'][:].T,
+            data = data_var,
             dims = ["range","time"],
             coords = dict(
                 range = radar_range,
@@ -1301,11 +1528,18 @@ class Hiwrap(Radar):
                 lat = lat,
                 lon = lon),
             attrs = dict(
-                description = hdf['Products']['Ka']['Combined']['Information']['ChannelMask_description'][0].decode('UTF-8'),
+                description = description_var,
             ) 
         )
+        
+        if dataset=='2020': # for files with combined Ku- and Ka-band data
+            data_var = hdf['Products']['Ku']['Combined']['Information']['ChannelMask'][:].T
+            description_var = hdf['Products']['Ku']['Combined']['Information']['ChannelMask_description'][0].decode('UTF-8')
+        else:
+            data_var = hdf['Products']['Combined']['Information']['ChannelMask'][:].T
+            description_var = hdf['Products']['Combined']['Information']['ChannelMask_description'][0].decode('UTF-8')
         channel_mask_ku = xr.DataArray(
-            data = hdf['Products']['Ku']['Combined']['Information']['ChannelMask'][:].T,
+            data = data_var,
             dims = ["range","time"],
             coords = dict(
                 range = radar_range,
@@ -1315,33 +1549,58 @@ class Hiwrap(Radar):
                 lat = lat,
                 lon = lon),
             attrs = dict(
-                description = hdf['Products']['Ku']['Combined']['Information']['ChannelMask_description'][0].decode('UTF-8'),
+                description = description_var,
             ) 
         )
 
+        if dataset=='2020': # for files with combined Ku- and Ka-band data
+            data_var = hdf['Products']['Ka']['Information']['ResolutionHorizontal6dB'][:]
+            description_var = hdf['Products']['Ka']['Information']['ResolutionHorizontal6dB_description'][0].decode('UTF-8')
+            units_var = hdf['Products']['Ka']['Information']['ResolutionHorizontal6dB_units'][0].decode('UTF-8')
+        else:
+            data_var = hdf2['Products']['Information']['ResolutionHorizontal6dB'][:]
+            description_var = hdf2['Products']['Information']['ResolutionHorizontal6dB_description'][0].decode('UTF-8')
+            units_var = hdf2['Products']['Information']['ResolutionHorizontal6dB_units'][0].decode('UTF-8')
         horiz_resolution_ka = xr.DataArray(
-            data = hdf['Products']['Ka']['Information']['ResolutionHorizontal6dB'][:],
+            data = data_var,
             dims = ["range"],
             coords = dict(
                 range = radar_range),
             attrs = dict(
-                description=hdf['Products']['Ka']['Information']['ResolutionHorizontal6dB_description'][0].decode('UTF-8'),
-                units = hdf['Products']['Ka']['Information']['ResolutionHorizontal6dB_units'][0].decode('UTF-8')
+                description = description_var,
+                units = units_var
             ) 
         )
 
+        if dataset=='2020': # for files with combined Ku- and Ka-band data
+            data_var = hdf['Products']['Ku']['Information']['ResolutionHorizontal6dB'][:]
+            description_var = hdf['Products']['Ku']['Information']['ResolutionHorizontal6dB_description'][0].decode('UTF-8')
+            units_var = hdf['Products']['Ku']['Information']['ResolutionHorizontal6dB_units'][0].decode('UTF-8')
+        else:
+            data_var = hdf['Products']['Information']['ResolutionHorizontal6dB'][:]
+            description_var = hdf['Products']['Information']['ResolutionHorizontal6dB_description'][0].decode('UTF-8')
+            units_var = hdf['Products']['Information']['ResolutionHorizontal6dB_units'][0].decode('UTF-8')
         horiz_resolution_ku = xr.DataArray(
-            data = hdf['Products']['Ku']['Information']['ResolutionHorizontal6dB'][:],
+            data = data_var,
             dims = ["range"],
             coords = dict(
                 range = radar_range),
             attrs = dict(
-                description=hdf['Products']['Ku']['Information']['ResolutionHorizontal6dB_description'][0].decode('UTF-8'),
-                units = hdf['Products']['Ku']['Information']['ResolutionHorizontal6dB_units'][0].decode('UTF-8')
+                description = description_var,
+                units = units_var
             ) 
         )
+        
+        if dataset=='2020': # for files with combined Ku- and Ka-band data
+            data_var = hdf['Products']['Ka']['Combined']['Information']['Velocity_horizwind_offset'][:].T
+            description_var = hdf['Products']['Ka']['Combined']['Information']['Velocity_horizwind_offset_description'][0].decode('UTF-8')
+            units_var = hdf['Products']['Ka']['Combined']['Information']['Velocity_horizwind_offset_units'][0].decode('UTF-8')
+        else:
+            data_var = hdf2['Products']['Combined']['Information']['Velocity_horizwind_offset'][ka_inds, :].T
+            description_var = hdf2['Products']['Combined']['Information']['Velocity_horizwind_offset_description'][0].decode('UTF-8')
+            units_var = hdf2['Products']['Combined']['Information']['Velocity_horizwind_offset_units'][0].decode('UTF-8')
         vel_horizwind_offset_ka = xr.DataArray(
-            data = hdf['Products']['Ka']['Combined']['Information']['Velocity_horizwind_offset'][:].T,
+            data = data_var,
             dims = ["range","time"],
             coords = dict(
                 range = radar_range,
@@ -1351,12 +1610,21 @@ class Hiwrap(Radar):
                 lat = lat,
                 lon = lon),
             attrs = dict(
-                description=hdf['Products']['Ka']['Combined']['Information']['Velocity_horizwind_offset_description'][0].decode('UTF-8'),
-                units = hdf['Products']['Ka']['Combined']['Information']['Velocity_horizwind_offset_units'][0].decode('UTF-8')
+                description = description_var,
+                units = units_var
             ) 
         )
+        
+        if dataset=='2020': # for files with combined Ku- and Ka-band data
+            data_var = hdf['Products']['Ku']['Combined']['Information']['Velocity_horizwind_offset'][:].T
+            description_var = hdf['Products']['Ku']['Combined']['Information']['Velocity_horizwind_offset_description'][0].decode('UTF-8')
+            units_var = hdf['Products']['Ku']['Combined']['Information']['Velocity_horizwind_offset_units'][0].decode('UTF-8')
+        else:
+            data_var = hdf['Products']['Combined']['Information']['Velocity_horizwind_offset'][:].T
+            description_var = hdf['Products']['Combined']['Information']['Velocity_horizwind_offset_description'][0].decode('UTF-8')
+            units_var = hdf['Products']['Combined']['Information']['Velocity_horizwind_offset_units'][0].decode('UTF-8')
         vel_horizwind_offset_ku = xr.DataArray(
-            data = hdf['Products']['Ku']['Combined']['Information']['Velocity_horizwind_offset'][:].T,
+            data = data_var,
             dims = ["range","time"],
             coords = dict(
                 range = radar_range,
@@ -1366,12 +1634,21 @@ class Hiwrap(Radar):
                 lat = lat,
                 lon = lon),
             attrs = dict(
-                description=hdf['Products']['Ku']['Combined']['Information']['Velocity_horizwind_offset_description'][0].decode('UTF-8'),
-                units = hdf['Products']['Ku']['Combined']['Information']['Velocity_horizwind_offset_units'][0].decode('UTF-8')
+                description = description_var,
+                units = units_var
             ) 
         )
+        
+        if dataset=='2020': # for files with combined Ku- and Ka-band data
+            data_var = hdf['Products']['Ku']['Combined']['Information']['Velocity_nubf_offset'][:].T
+            description_var = hdf['Products']['Ku']['Combined']['Information']['Velocity_nubf_offset_description'][0].decode('UTF-8')
+            units_var = hdf['Products']['Ku']['Combined']['Information']['Velocity_nubf_offset_units'][0].decode('UTF-8')
+        else:
+            data_var = hdf['Products']['Combined']['Information']['Velocity_nubf_offset'][:].T
+            description_var = hdf['Products']['Combined']['Information']['Velocity_nubf_offset_description'][0].decode('UTF-8')
+            units_var = hdf['Products']['Combined']['Information']['Velocity_nubf_offset_units'][0].decode('UTF-8')
         vel_nubf_offset_ku = xr.DataArray(
-            data = hdf['Products']['Ku']['Combined']['Information']['Velocity_nubf_offset'][:].T,
+            data = data_var,
             dims = ["range","time"],
             coords = dict(
                 range = radar_range,
@@ -1381,8 +1658,8 @@ class Hiwrap(Radar):
                 lat = lat,
                 lon = lon),
             attrs = dict(
-                description=hdf['Products']['Ku']['Combined']['Information']['Velocity_nubf_offset_description'][0].decode('UTF-8'),
-                units = hdf['Products']['Ku']['Combined']['Information']['Velocity_nubf_offset_units'][0].decode('UTF-8')
+                description = description_var,
+                units = units_var
             ) 
         )
 
@@ -1395,24 +1672,39 @@ class Hiwrap(Radar):
         L1A_ProcessDate = hdf['Information']['L1A_ProcessDate'][0].decode('UTF-8')
         L1B_ProcessDate = hdf['Information']['L1B_ProcessDate'][0].decode('UTF-8')
         L1B_Revision = hdf['Information']['L1B_Revision'][0].decode('UTF-8')
-        L1B_Revision_Note = hdf['Information']['L1B_Revision_Note'][0].decode('UTF-8')
+        if isinstance(hdf['Information']['L1B_Revision_Note'][0], np.float64): # for nan as notes
+            L1B_Revision_Note = str(hdf['Information']['L1B_Revision_Note'][0])
+        else: # for str as notes
+            L1B_Revision_Note = hdf['Information']['L1B_Revision_Note'][0].decode('UTF-8')
         missionPI = hdf['Information']['MissionPI'][0].decode('UTF-8')
         radar_name = hdf['Information']['RadarName'][0].decode('UTF-8')
-        antenna_beamwidth_ka = hdf['Products']['Ka']['Information']['AntennaBeamwidth'][0]
-        antenna_beamwidth_ku = hdf['Products']['Ku']['Information']['AntennaBeamwidth'][0]
         antenna_size = hdf['Products']['Information']['AntennaSize'][0]
-        avg_pulses_ka = hdf['Products']['Ka']['Information']['AveragedPulses'][0]
-        avg_pulses_ku = hdf['Products']['Ku']['Information']['AveragedPulses'][0]
-        freq_ka = hdf['Products']['Ka']['Information']['Frequency'][0]
-        freq_ku = hdf['Products']['Ku']['Information']['Frequency'][0]
         gatespacing = hdf['Products']['Information']['GateSpacing'][0]
         antenna_pointing = hdf['Products']['Information']['NominalAntennaPointing'][0].decode('UTF-8')
         pri = hdf['Products']['Information']['PRI'][0].decode('UTF-8')
-        wavelength_ka = hdf['Products']['Ka']['Information']['Wavelength'][0]
-        wavelength_ku = hdf['Products']['Ku']['Information']['Wavelength'][0]
+        if dataset=='2020': # for Ku- and Ka- band metadata in same file
+            antenna_beamwidth_ka = hdf['Products']['Ka']['Information']['AntennaBeamwidth'][0]
+            antenna_beamwidth_ku = hdf['Products']['Ku']['Information']['AntennaBeamwidth'][0]
+            avg_pulses_ka = hdf['Products']['Ka']['Information']['AveragedPulses'][0]
+            avg_pulses_ku = hdf['Products']['Ku']['Information']['AveragedPulses'][0]
+            freq_ka = hdf['Products']['Ka']['Information']['Frequency'][0]
+            freq_ku = hdf['Products']['Ku']['Information']['Frequency'][0]
+            wavelength_ka = hdf['Products']['Ka']['Information']['Wavelength'][0]
+            wavelength_ku = hdf['Products']['Ku']['Information']['Wavelength'][0]
+        else:
+            antenna_beamwidth_ka = hdf2['Products']['Information']['AntennaBeamwidth'][0]
+            antenna_beamwidth_ku = hdf['Products']['Information']['AntennaBeamwidth'][0]
+            avg_pulses_ka = hdf2['Products']['Information']['AveragedPulses'][0]
+            avg_pulses_ku = hdf['Products']['Information']['AveragedPulses'][0]
+            freq_ka = hdf2['Products']['Information']['Frequency'][0]
+            freq_ku = hdf['Products']['Information']['Frequency'][0]
+            wavelength_ka = hdf2['Products']['Information']['Wavelength'][0]
+            wavelength_ku = hdf['Products']['Information']['Wavelength'][0]
         
         # close the file
         hdf.close()
+        if dataset!='2020': # for deploymnets where Ku- and Ka-band split in 2 files
+            hdf2.close() 
 
         # put everything together into an XArray DataSet
         ds = xr.Dataset(
@@ -1487,7 +1779,24 @@ class Hiwrap(Radar):
 
 
     def correct_attenuation(self, atten_file):
-        pass
+        """
+        Correct reflectivity for attenuation at Ku- and Ka-band due to atmospheric gases.
+
+        Parameters
+        ----------
+
+        atten_file : str
+            filepath to attenuation data
+
+        """
+        # open the attentuation file and trim to match radar beams
+        atten_data = xr.open_dataset(atten_file).sel(time=self.data.time)
+
+        # add the correction to the reflectivity values
+        self.data['dbz_ka'].values += atten_data['k_ka'].values
+        self.data['dbz_ku'].values += atten_data['k_ku'].values
+        
+        return self.data
 
 
 
@@ -1530,13 +1839,13 @@ class Exrad(Radar):
  
     """
 
-    def __init__(self, filepath, start_time=None, end_time=None, atten_file=None, max_roll=None, 
+    def __init__(self, filepath, start_time=None, end_time=None, atten_file=None, dataset='2020', max_roll=None, 
         dbz_sigma=None, vel_sigma=None, width_sigma=None, dbz_min=None, vel_min=None, width_min=None):
         
         self.name = 'EXRAD'
 
         # read the raw data
-        self.data = self.readfile(filepath, start_time, end_time)
+        self.data = self.readfile(filepath, start_time, end_time, dataset)
         """
         xarray.Dataset of radar variables and attributes
 
@@ -1597,10 +1906,13 @@ class Exrad(Radar):
         if width_sigma is not None:
             self.data['width'] = self.despeckle(self.data['width'], width_sigma)
         
+        if resample_ref is not None:
+            self.data = self.resample(self.data, resample_ref)
+        
         
    
 
-    def readfile(self, filepath, start_time=None, end_time=None):
+    def readfile(self, filepath, start_time=None, end_time=None, dataset='2020'):
         """
         Reads the EXRAD data file and unpacks the fields into an xarray.Dataset
 
@@ -1613,6 +1925,8 @@ class Exrad(Radar):
             The initial time of interest
         end_time : np.datetime64 or None
             The final time of interest
+        dataset  : str
+            Four-digit deployment year for handling radar variables/metadata
         
         Returns
         -------
@@ -1634,12 +1948,16 @@ class Exrad(Radar):
             time_inds = np.where((time_dt64 != None))[0]
 
         # Aircraft nav information
+        if dataset=='2020': # metadata key misspelled in 2020 dataset
+            description_str = 'NominalDistance_desciption'
+        else:# metadata key spelling fixed in 2022 dataset
+            description_str = 'NominalDistance_description'
         nomdist = xr.DataArray(
             data = hdf['Navigation']['Data']['NominalDistance'][:],
             dims = ["time"],
             coords = dict(time=time_dt64),
             attrs = dict(
-                description=hdf['Navigation']['Information']['NominalDistance_desciption'][0].decode('UTF-8'),
+                description=hdf['Navigation']['Information'][description_str][0].decode('UTF-8'),
                 units = hdf['Navigation']['Information']['NominalDistance_units'][0].decode('UTF-8')
             )
         )
@@ -1887,8 +2205,12 @@ class Exrad(Radar):
                 ) 
             )
         
+        if hdf['Products']['Information']['AircraftMotion'][:].ndim > 1: # this was a 2D var in some 2020 data
+            ac_mot_data = hdf['Products']['Information']['AircraftMotion'][:,0]
+        else: # this is a 1D var for most datasets
+            ac_mot_data = hdf['Products']['Information']['AircraftMotion'][:]
         aircraft_motion = xr.DataArray(
-            data = hdf['Products']['Information']['AircraftMotion'][:],
+            data = ac_mot_data,
             dims = ["time"],
             coords = dict(
                 time = time_dt64,
@@ -1965,7 +2287,10 @@ class Exrad(Radar):
         L1A_ProcessDate = hdf['Information']['L1A_ProcessDate'][0].decode('UTF-8')
         L1B_ProcessDate = hdf['Information']['L1B_ProcessDate'][0].decode('UTF-8')
         L1B_Revision = hdf['Information']['L1B_Revision'][0].decode('UTF-8')
-        L1B_Revision_Note = hdf['Information']['L1B_Revision_Note'][0].decode('UTF-8')
+        if isinstance(hdf['Information']['L1B_Revision_Note'][0], np.float64): # for nan as notes
+            L1B_Revision_Note = str(hdf['Information']['L1B_Revision_Note'][0])
+        else: # for str as notes
+            L1B_Revision_Note = hdf['Information']['L1B_Revision_Note'][0].decode('UTF-8')
         missionPI = hdf['Information']['MissionPI'][0].decode('UTF-8')
         radar_name = hdf['Information']['RadarName'][0].decode('UTF-8')
         antenna_beamwidth = hdf['Products']['Information']['AntennaBeamwidth'][0]
@@ -2051,11 +2376,13 @@ class Exrad(Radar):
             filepath to attenuation data
 
         """
-        # open the attentuation file
-        atten_data = xr.open_dataset(atten_file)
+        # open the attentuation file and trim to match radar beams
+        atten_data = xr.open_dataset(atten_file).sel(time=self.data.time)
 
         # add the correction to the reflectivity values
         self.data['dbz'].values += atten_data['k_x'].values
+        
+        return self.data
 
     
 
