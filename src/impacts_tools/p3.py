@@ -763,6 +763,47 @@ class Instrument(ABC):
                 return ds_downsampled
             else:
                 return self.data
+        elif self.name == 'SODA PSD': # special resampling of some variables
+            td_ds = pd.to_timedelta(
+                self.data['time'][1].values - self.data['time'][0].values
+            )
+            if pd.to_timedelta(tres) > td_ds: # upsampling not supported
+                # vars to sum along time dimension (not for Merged files)
+                if 'count' in self.data.data_vars:
+                    sum_vars = ['count', 'sv']
+                    ds_sum_vars = self.data[sum_vars].resample(time=tres).sum(
+                        skipna=True, keep_attrs=True)
+                
+                # vars to average along time dimension
+                mean_nan_vars = ['ND']
+                mean_vars = ['area_ratio', 'aspect_ratio']
+                if '2DS' in self.instruments:
+                    mean_vars.append('qc_flag_2ds')
+                elif 'HVPS' in self.instruments:
+                    mean_vars.append('qc_flag_hvps')
+                else: # 2D-S + HVPS
+                    if 'qc_flag_2ds' in self.data.data_vars: # two files merged
+                        mean_vars.append('qc_flag_2ds')
+                        mean_vars.append('qc_flag_hvps')
+                    else: # MergedHorizontal or MergedVertical
+                        mean_vars.append('qc_flag')
+                ds_mean_nan_vars = self.data[mean_nan_vars].fillna(0.).resample(time=tres).mean(
+                    skipna=True, keep_attrs=True)
+                ds_mean_nan_vars = ds_mean_nan_vars.where(ds_mean_nan_vars != 0.)
+                ds_mean_vars = self.data[mean_vars].resample(time=tres).mean(
+                    skipna=True, keep_attrs=True)
+                
+                if 'count' in self.data.data_vars:
+                    ds_downsampled = xr.merge(
+                        [ds_sum_vars, ds_mean_nan_vars, ds_mean_vars]
+                    ).transpose('habit', 'size', 'time')
+                else:
+                    ds_downsampled = xr.merge(
+                        [ds_mean_nan_vars, ds_mean_vars]
+                    ).transpose('habit', 'size', 'time')
+                return ds_downsampled
+            else:
+                return self.data
         else:
             if 'time' in list(self.data.data_vars): # for 1 Hz datasets
                 td_ds = pd.to_timedelta(
@@ -1130,6 +1171,35 @@ class Psd(Instrument):
                 - area_ratio_mean_<mD> (time): xarray.DataArray(float) - Mean area ratio using number or mass (m-D) weighting (#)
                 - aspect_ratio_mean_<mD> (time): xarray.DataArray(float) - Mean aspect ratio using number or mass (m-D) weighting (#)
             """
+        elif software == 'SODA':
+            self.data = self.readfile_soda(
+                filepath_2ds, filepath_hvps, date, binlims, ovld_thresh
+            )
+            """
+            xarray.Dataset of UIOOPS PSD variables and attributes
+            Dimensions:
+                - time: np.array(np.datetime64[ns]) - The UTC time start of the N-s upsampled interval
+            Coordinates:
+                - bin_center (size): np.array(np.float64) - Size bin midpoint (mm)
+                - bin_left (size): np.array(np.float64) - Size bin left endpoint (mm)
+                - bin_right (size): np.array(np.float64) - Size bin right endpoint (mm)
+                - bin_width (size): np.array(np.float64) - Size bin width (cm)
+                - time (time): np.array(np.datetime64[ns]) - The UTC time start of the N-s upsampled interval
+            Variables:
+                - count (size, time): xarray.DataArray(float) - Particle count per size bin (#)
+                - sv (size, time): xarray.DataArray(float) - Sample volume (cm3)
+                - ND (size, time): xarray.DataArray(float) - Number distribution function (cm-4)
+                - area_ratio (size, time): xarray.DataArray(float) - Mean area ratio per size bin (#)
+                - aspect_ratio (size, time): xarray.DataArray(float) - Mean aspect ratio per size bin (#)
+                - qc_flag_<probe> (size, time): xarray.DataArray(float) - Probe quality flag (0: good, 1: medium, 2: bad)
+                - n (time): xarray.DataArray(float) - Number concentration (L-1)
+                - iwc_<mD> (time): xarray.DataArray(float) - Ice water content using specified mass-dimension (m-D) relationship (g m-3)
+                - dm_<mD> (time): xarray.DataArray(float) - Mass-weighted mean diam using specified m-D relationship (mm)
+                - dmm_<mD> (time): xarray.DataArray(float) - Median mass diam using specified m-D relationship (mm)
+                - rhoe_<mD> (time): xarray.DataArray(float) - Effective density using specified m-D relationship (g cm-3)
+                - area_ratio_mean_<mD> (time): xarray.DataArray(float) - Mean area ratio using number or mass (m-D) weighting (#)
+                - aspect_ratio_mean_<mD> (time): xarray.DataArray(float) - Mean aspect ratio using number or mass (m-D) weighting (#)
+            """
         
         # trim dataset to P-3 time bounds or from specified start/end
         if p3_object is not None:
@@ -1159,7 +1229,7 @@ class Psd(Instrument):
                 bin_min = data['bin_min'].values
                 bin_max = data['bin_max'].values
                 bin_width = data['bin_dD'].values / 10. # (cm)
-                bin_mid = data['bin_min'].values
+                bin_mid = data['bin_mid'].values
                 with np.errstate(divide='ignore', invalid='ignore'):
                     count_temp = data['count'].values.T
                     sv_temp = data['sample_vol'].values.T
@@ -1372,6 +1442,219 @@ class Psd(Instrument):
             else: # both 2D-S and HVPS available, add the probe active time for each
                 ds_merged['active_time_2ds'] = ds_list[0]['active_time']
                 ds_merged['active_time_hvps'] = ds_list[1]['active_time']
+                        
+        return ds_merged
+    
+    def readfile_soda(
+            self, filepath_2ds, filepath_hvps, date,
+            binlims=(0.1, 1.4, 30.), qc_thresh=1):
+        # initialize dataset list to accomodate 2 probe PSDs
+        ds_list = []
+
+        # load the datasets if available
+        for (probe, file) in zip(['2ds', 'hvps'], [filepath_2ds, filepath_hvps]):
+            if (file is not None) and (
+                    (probe == '2ds') or (filepath_2ds != filepath_hvps)):
+                data = xr.open_dataset(file)
+                time = np.array([
+                    np.datetime64(
+                        datetime.strptime(data.attrs['FlightDate'], '%m/%d/%Y')
+                    ) + np.timedelta64(
+                        int(data['time'].values[i]), 's')
+                    for i in range(len(data['time']))
+                ], dtype='datetime64[s]')
+                bin_min = data['CONCENTRATION'].attrs['bin_endpoints'][:-1] / 1000.
+                bin_max = data['CONCENTRATION'].attrs['bin_endpoints'][1:] / 1000.
+                bin_width = (bin_max - bin_min) / 10. # (cm)
+                bin_mid = data['CONCENTRATION'].attrs['bin_midpoints'] / 1000.
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    if 'COUNTS' in data.data_vars: # only in 2D-S and HVPS files
+                        dD_2d = np.tile(bin_width[:, np.newaxis], (1, len(time)))
+                        count_temp = data['COUNTS'].values
+                        ND_temp = (10. ** -8) * np.ma.masked_where(
+                            count_temp == 0., data['CONCENTRATION'].values
+                        )
+                        sv_temp = count_temp / ND_temp / dD_2d
+                    else: # MergedHorizontal and MergedVertical files
+                        ND_temp = (10. ** -8) * np.ma.masked_where(
+                            data['CONCENTRATION'].values == 0.,
+                            data['CONCENTRATION'].values
+                        )
+                    ar_temp = data['MEAN_AREARATIO'].values
+                    asr_temp = data['MEAN_ASPECTRATIO'].values
+                    qc_flag = data['PROBE_QC'].values
+                
+                # establish the data arrays
+                bin_mid = xr.DataArray(
+                    data=bin_mid, dims = 'size',
+                    attrs = dict(
+                        description='Particle size bin midpoint',
+                        units = 'mm')
+                )
+                bin_min = xr.DataArray(
+                    data=bin_min, dims = 'size',
+                    attrs = dict(
+                        description='Particle size bin left endpoint',
+                        units = 'mm')
+                )
+                bin_max = xr.DataArray(
+                    data=bin_max, dims = 'size',
+                    attrs = dict(
+                        description='Particle size bin right endpoint',
+                        units = 'mm')
+                )
+                bin_width = xr.DataArray(
+                    data=bin_width, dims = 'size',
+                    attrs = dict(
+                        description='Particle size bin width',
+                        units = 'cm')
+                )
+                if 'COUNTS' in data.data_vars: # only in 2D-S and HVPS files
+                    count = xr.DataArray(
+                        data = count_temp,
+                        dims = ['size', 'time'],
+                        coords = dict(
+                            bin_center=bin_mid, bin_left=bin_min, bin_right=bin_max,
+                            bin_width=bin_width, time=time),
+                        attrs = dict(
+                            description='Particle count per size bin',
+                            units = '#')
+                    )
+                    sv = xr.DataArray(
+                        data = sv_temp,
+                        dims = ['size', 'time'],
+                        coords = dict(
+                            bin_center=bin_mid, bin_left=bin_min, bin_right=bin_max,
+                            bin_width=bin_width, time=time),
+                        attrs = dict(
+                            description='Sample volume per bin over the time interval',
+                            units = 'cm3')
+                    )
+                ND = xr.DataArray(
+                    data = ND_temp,
+                    dims = ['size', 'time'],
+                    coords = dict(
+                        bin_center=bin_mid, bin_left=bin_min, bin_right=bin_max,
+                        bin_width=bin_width, time=time),
+                    attrs = dict(
+                        description='Number distribution function (PSD)',
+                        units = 'cm-4')
+                )
+                ar = xr.DataArray(
+                    data = ar_temp,
+                    dims = ['size', 'time'],
+                    coords = dict(
+                        bin_center=bin_mid, bin_left=bin_min, bin_right=bin_max,
+                        bin_width=bin_width, time=time),
+                    attrs = dict(
+                        description='Mean area ratio per bin',
+                        units = '#')
+                )
+                asr = xr.DataArray(
+                    data = asr_temp,
+                    dims = ['size', 'time'],
+                    coords = dict(
+                        bin_center=bin_mid, bin_left=bin_min, bin_right=bin_max,
+                        bin_width=bin_width, time=time),
+                    attrs = dict(
+                        description='Mean aspect ratio per bin',
+                        units = '#')
+                )
+                qc = xr.DataArray(
+                    data = qc_flag,
+                    dims = 'time',
+                    coords = dict(time=time),
+                    attrs = dict(
+                        description='Probe quality flag (0: good, 1: medium, 2: bad)',
+                        qc_threshold = f'{qc_thresh}',
+                        units = '#')
+                )
+                
+                # put everything together into an XArray DataSet
+                if 'COUNTS' in data.data_vars: # only in 2D-S and HVPS files
+                    data_vars = {
+                        'count': count,
+                        'sv': sv,
+                        'ND': ND,
+                        'area_ratio': ar,
+                        'aspect_ratio': asr,
+                        'qc_flag': qc
+                    }
+                else:
+                    data_vars = {
+                        'ND': ND,
+                        'area_ratio': ar,
+                        'aspect_ratio': asr,
+                        'qc_flag': qc
+                    }
+                ds = xr.Dataset(
+                    data_vars = data_vars,
+                    coords = {
+                        'bin_center': bin_mid,
+                        'bin_left': bin_min,
+                        'bin_right': bin_max,
+                        'bin_width': bin_width,
+                        'time': time
+                    },
+                    attrs = {
+                        'Experiment': 'IMPACTS',
+                        'Date': date,
+                        'Aircraft': 'P-3',
+                        'Data Contact': 'Aaron Bansemer (bansemer@ucar.edu)',
+                        'Instrument PI': 'David Delene (david.delene@und.edu)',
+                        'Mission PI': 'Lynn McMurdie (lynnm@uw.edu)',
+                        'L3A Software': data.attrs['Source'],
+                    }
+                )
+                
+                # trim based on probe size limits
+                if (probe == '2ds') and (filepath_2ds != filepath_hvps):
+                    ds = ds.sel(
+                        size=(ds.bin_left >= binlims[0]) & (ds.bin_left < binlims[1])
+                    )
+                elif (probe == '2ds') and (filepath_2ds == filepath_hvps): # Merged file
+                    ds = ds.sel(
+                        size=(ds.bin_left >= binlims[0]) & (ds.bin_left < binlims[-1])
+                    )
+                else: # HVPS file
+                    ds = ds.sel(
+                        size=(ds.bin_left >= binlims[-2]) & (ds.bin_left < binlims[-1])
+                    )
+                ds_list.append(ds)
+                
+            # concatonate probe PSDs if applicable
+            print(probe, file)
+            if len(ds_list) == 1: # no need to merge PSDs
+                ds_merged = ds_list[0].drop_vars('qc_flag')
+            else:
+                ds_merged = xr.concat(
+                    [ds_list[0].drop_vars('qc_flag'),
+                     ds_list[1].drop_vars('qc_flag')
+                    ], dim='size'
+                ) # concatenate, drop qc_flag for now
+                
+            # mask periods when qc flag meets/exceeds the specified threshold (optional)
+            if (qc_thresh is not None) and (len(ds_list) > 0):
+                if len(ds_list) == 1: # only one probe available
+                    good_times = ((ds_list[0]['qc_flag'] <= qc_thresh))
+                else: # both 2D-S and HVPS available, need good data from both probes
+                    good_times = (
+                        (ds_list[0]['qc_flag'] <= qc_thresh) & # 2D-S
+                        (ds_list[1]['qc_flag'] <= qc_thresh) # HVPS
+                    )
+                ds_merged = ds_merged.where(good_times) # values for bad times become nan
+                
+            # add probe qc flag to dataset
+            if (len(ds_list) == 1) and (filepath_2ds is not None):
+                if filepath_2ds != filepath_hvps: # 2D-S only
+                    ds_merged['qc_flag_2ds'] = ds_list[0]['qc_flag']
+                else: # MergedHorizontal or MergedVertical
+                    ds_merged['qc_flag'] = ds_list[0]['qc_flag']
+            elif (len(ds_list) == 1) and (filepath_hvps is not None): # HVPS only
+                ds_merged['active_time_hvps'] = ds_list[0]['active_time']
+            else: # both 2D-S and HVPS available, add the qc flag for each
+                ds_merged['active_time_2ds'] = ds_list[0]['qc_flag']
+                ds_merged['active_time_hvps'] = ds_list[1]['qc_flag']
                         
         return ds_merged
                 
