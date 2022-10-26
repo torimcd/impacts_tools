@@ -777,9 +777,9 @@ class Instrument(ABC):
                 # vars to average along time dimension
                 mean_nan_vars = ['ND']
                 mean_vars = ['area_ratio', 'aspect_ratio']
-                if '2DS' in self.instruments:
+                if '2DS' == self.instruments:
                     mean_vars.append('qc_flag_2ds')
-                elif 'HVPS' in self.instruments:
+                elif 'HVPS' == self.instruments:
                     mean_vars.append('qc_flag_hvps')
                 else: # 2D-S + HVPS
                     if 'qc_flag_2ds' in self.data.data_vars: # two files merged
@@ -796,11 +796,11 @@ class Instrument(ABC):
                 if 'count' in self.data.data_vars:
                     ds_downsampled = xr.merge(
                         [ds_sum_vars, ds_mean_nan_vars, ds_mean_vars]
-                    ).transpose('habit', 'size', 'time')
+                    ).transpose('size', 'time')
                 else:
                     ds_downsampled = xr.merge(
                         [ds_mean_nan_vars, ds_mean_vars]
-                    ).transpose('habit', 'size', 'time')
+                    ).transpose('size', 'time')
                 return ds_downsampled
             else:
                 return self.data
@@ -1411,37 +1411,37 @@ class Psd(Instrument):
                     )
                 ds_list.append(ds)
                 
-            # concatonate probe PSDs if applicable
-            if len(ds_list) == 1: # no need to merge PSDs
-                ds_merged = ds_list[0].drop_vars('active_time')
-            else:
-                ds_merged = xr.concat(
-                    [ds_list[0].drop_vars('active_time'),
-                     ds_list[1].drop_vars('active_time')
-                    ], dim='size'
-                ) # concatenate, drop active_time for now
-                #ds_merged['active_time_2ds'] = ds_list[0]['active_time']
-                #ds_merged['active_time_hvps'] = ds_list[1]['active_time']
-                
-            # mask periods when dead time exceeds the specified threshold (optional)
-            if (ovld_thresh is not None) and (len(ds_list) > 0):
-                if len(ds_list) == 1: # only one probe available
-                    good_times = ((ds_list[0]['active_time'] >= 1. - ovld_thresh))
-                else: # both 2D-S and HVPS available, need good data from both probes
-                    good_times = (
-                        (ds_list[0]['active_time'] >= 1. - ovld_thresh) & # 2D-S
-                        (ds_list[1]['active_time'] >= 1. - ovld_thresh) # HVPS
-                    )
-                ds_merged = ds_merged.where(good_times) # values for bad times become nan
-                
-            # add probe active time to dataset
-            if (len(ds_list) == 1) and (filepath_2ds is not None): # 2D-S only
-                ds_merged['active_time_2ds'] = ds_list[0]['active_time']
-            elif (len(ds_list) == 1) and (filepath_hvps is not None): # HVPS only
-                ds_merged['active_time_hvps'] = ds_list[0]['active_time']
-            else: # both 2D-S and HVPS available, add the probe active time for each
-                ds_merged['active_time_2ds'] = ds_list[0]['active_time']
-                ds_merged['active_time_hvps'] = ds_list[1]['active_time']
+        # concatonate probe PSDs if applicable
+        if len(ds_list) == 1: # no need to merge PSDs
+            ds_merged = ds_list[0].drop_vars('active_time')
+        else:
+            ds_merged = xr.concat(
+                [ds_list[0].drop_vars('active_time'),
+                 ds_list[1].drop_vars('active_time')
+                ], dim='size'
+            ) # concatenate, drop active_time for now
+            #ds_merged['active_time_2ds'] = ds_list[0]['active_time']
+            #ds_merged['active_time_hvps'] = ds_list[1]['active_time']
+
+        # mask periods when dead time exceeds the specified threshold (optional)
+        if (ovld_thresh is not None) and (len(ds_list) > 0):
+            if len(ds_list) == 1: # only one probe available
+                good_times = ((ds_list[0]['active_time'] >= 1. - ovld_thresh))
+            else: # both 2D-S and HVPS available, need good data from both probes
+                good_times = (
+                    (ds_list[0]['active_time'] >= 1. - ovld_thresh) & # 2D-S
+                    (ds_list[1]['active_time'] >= 1. - ovld_thresh) # HVPS
+                )
+            ds_merged = ds_merged.where(good_times) # values for bad times become nan
+
+        # add probe active time to dataset
+        if (len(ds_list) == 1) and (filepath_2ds is not None): # 2D-S only
+            ds_merged['active_time_2ds'] = ds_list[0]['active_time']
+        elif (len(ds_list) == 1) and (filepath_hvps is not None): # HVPS only
+            ds_merged['active_time_hvps'] = ds_list[0]['active_time']
+        else: # both 2D-S and HVPS available, add the probe active time for each
+            ds_merged['active_time_2ds'] = ds_list[0]['active_time']
+            ds_merged['active_time_hvps'] = ds_list[1]['active_time']
                         
         return ds_merged
     
@@ -1610,7 +1610,7 @@ class Psd(Instrument):
                 # trim based on probe size limits
                 if (probe == '2ds') and (filepath_2ds != filepath_hvps):
                     ds = ds.sel(
-                        size=(ds.bin_left >= binlims[0]) & (ds.bin_left < binlims[1])
+                        size=(ds.bin_left >= binlims[0]) & (ds.bin_left < binlims[-2])
                     )
                 elif (probe == '2ds') and (filepath_2ds == filepath_hvps): # Merged file
                     ds = ds.sel(
@@ -1618,45 +1618,200 @@ class Psd(Instrument):
                     )
                 else: # HVPS file
                     ds = ds.sel(
-                        size=(ds.bin_left >= binlims[-2]) & (ds.bin_left < binlims[-1])
+                        size=(ds.bin_left >= binlims[1]) & (ds.bin_left < binlims[-1])
                     )
                 ds_list.append(ds)
                 
-            # concatonate probe PSDs if applicable
-            print(probe, file)
-            if len(ds_list) == 1: # no need to merge PSDs
-                ds_merged = ds_list[0].drop_vars('qc_flag')
-            else:
+        # concatonate probe PSDs if applicable
+        if len(ds_list) == 1: # no need to merge PSDs
+            ds_merged = ds_list[0].drop_vars('qc_flag')
+        else:
+            if len(binlims) < 4:
                 ds_merged = xr.concat(
                     [ds_list[0].drop_vars('qc_flag'),
                      ds_list[1].drop_vars('qc_flag')
                     ], dim='size'
                 ) # concatenate, drop qc_flag for now
-                
-            # mask periods when qc flag meets/exceeds the specified threshold (optional)
-            if (qc_thresh is not None) and (len(ds_list) > 0):
-                if len(ds_list) == 1: # only one probe available
-                    good_times = ((ds_list[0]['qc_flag'] <= qc_thresh))
-                else: # both 2D-S and HVPS available, need good data from both probes
-                    good_times = (
-                        (ds_list[0]['qc_flag'] <= qc_thresh) & # 2D-S
-                        (ds_list[1]['qc_flag'] <= qc_thresh) # HVPS
-                    )
-                ds_merged = ds_merged.where(good_times) # values for bad times become nan
-                
-            # add probe qc flag to dataset
-            if (len(ds_list) == 1) and (filepath_2ds is not None):
-                if filepath_2ds != filepath_hvps: # 2D-S only
-                    ds_merged['qc_flag_2ds'] = ds_list[0]['qc_flag']
-                else: # MergedHorizontal or MergedVertical
-                    ds_merged['qc_flag'] = ds_list[0]['qc_flag']
-            elif (len(ds_list) == 1) and (filepath_hvps is not None): # HVPS only
-                ds_merged['active_time_hvps'] = ds_list[0]['active_time']
-            else: # both 2D-S and HVPS available, add the qc flag for each
-                ds_merged['active_time_2ds'] = ds_list[0]['qc_flag']
-                ds_merged['active_time_hvps'] = ds_list[1]['qc_flag']
+            else: # blend probes in transition region
+                ds_merged = self.weight_psd(
+                    ds_list[0], ds_list[1], qc_thresh, binlims)
+
+        # mask periods when qc flag meets/exceeds the specified threshold (optional)
+        if (qc_thresh is not None) and (len(ds_list) > 0):
+            if len(ds_list) == 1: # only one probe available
+                good_times = ((ds_list[0]['qc_flag'] <= qc_thresh))
+            else: # both 2D-S and HVPS available, need good data from both probes
+                good_times = (
+                    (ds_list[0]['qc_flag'] <= qc_thresh) & # 2D-S
+                    (ds_list[1]['qc_flag'] <= qc_thresh) # HVPS
+                )
+            ds_merged = ds_merged.where(good_times) # values for bad times become nan
+
+        # add probe qc flag to dataset
+        if (len(ds_list) == 1) and (filepath_2ds is not None):
+            if filepath_2ds != filepath_hvps: # 2D-S only
+                ds_merged['qc_flag_2ds'] = ds_list[0]['qc_flag']
+            else: # MergedHorizontal or MergedVertical
+                ds_merged['qc_flag'] = ds_list[0]['qc_flag']
+        elif (len(ds_list) == 1) and (filepath_hvps is not None): # HVPS only
+            ds_merged['qc_flag_hvps'] = ds_list[0]['qc_flag']
+        else: # both 2D-S and HVPS available, add the qc flag for each
+            ds_merged['qc_flag_2ds'] = ds_list[0]['qc_flag']
+            ds_merged['qc_flag_hvps'] = ds_list[1]['qc_flag']
                         
         return ds_merged
+    
+    def weight_psd(self, psd_2ds, psd_hvps, qc_thresh, binlims):
+        print(f'Weighting 2D-S and HVPS PSDs in {binlims[1]}-{binlims[2]} mm range')
+
+        bin_mid = xr.DataArray(
+            data = np.append(
+                psd_2ds['bin_center'].values,
+                psd_hvps['bin_center'].values[
+                    psd_hvps['bin_center'] >
+                    psd_2ds['bin_center'].values[-1]
+                ]
+            ),
+            dims = 'size',
+            attrs = psd_2ds['bin_center'].attrs
+        )
+        bin_min = xr.DataArray(
+            data = np.append(
+                psd_2ds['bin_left'].values,
+                psd_hvps['bin_left'].values[
+                    psd_hvps['bin_center'] >
+                    psd_2ds['bin_center'].values[-1]
+                ]
+            ),
+            dims = 'size',
+            attrs = psd_2ds['bin_left'].attrs
+        )
+        bin_max = xr.DataArray(
+            data = np.append(
+                psd_2ds['bin_right'].values,
+                psd_hvps['bin_right'].values[
+                    psd_hvps['bin_center'] >
+                    psd_2ds['bin_center'].values[-1]
+                ]
+            ),
+            dims = 'size',
+            attrs = psd_2ds['bin_right'].attrs
+        )
+        dD = xr.DataArray(
+            data = (bin_max.values - bin_min.values) / 10.,
+            dims = 'size',
+            attrs = psd_2ds['bin_width'].attrs
+        )
+
+        # compute weights following Fontaine et al. (2014)
+        # doi: 
+        w_hvps = (bin_mid - binlims[1]) / (binlims[2] - binlims[1])
+        w_hvps[(w_hvps < 0.)] = 0.
+        w_hvps[(w_hvps > 1.)] = 1.
+        w_hvps = np.sqrt(w_hvps) # weight HVPS more than a linear weighting
+        weight_hvps = xr.DataArray(
+            data = w_hvps,
+            dims = 'size',
+            attrs = dict(
+                description = 'HVPS weight per bin for the composite PSD',
+                units = '# [0-1]'
+            )
+        )
+        weight_2ds = xr.DataArray(
+            data = 1 - weight_hvps.values,
+            dims = 'size',
+            attrs = dict(
+                description = '2D-S weight per bin for the composite PSD',
+                units = '# [0-1]'
+            )
+        )
+
+        # interpolate psds (nearest neighbor) to match new bin arrangement
+        psd_interp_2ds = psd_2ds.copy(deep=True)
+        psd_interp_2ds = psd_2ds.swap_dims({'size': 'bin_center'}).drop_vars(
+            ['count', 'sv']
+        )
+        if qc_thresh is not None:
+            psd_interp_2ds.drop_vars('qc_flag')
+        psd_interp_2ds = weight_2ds * psd_interp_2ds.interp(
+            bin_center=bin_mid, method='nearest'
+        )
+        psd_interp_hvps = psd_hvps.copy(deep=True)
+        psd_interp_hvps = psd_hvps.swap_dims({'size': 'bin_center'}).drop_vars(
+            ['count', 'sv']
+        )
+        if qc_thresh is not None:
+            psd_interp_hvps.drop_vars('qc_flag')
+        psd_interp_hvps = weight_hvps * psd_interp_hvps.interp(
+            bin_center=bin_mid, method='nearest'
+        )
+
+        # get bin widths
+        dD_2ds = psd_interp_2ds['bin_width'].values
+        dD_2ds[np.isnan(dD_2ds)] = np.nan # dummy value for bins outside probe range
+        dD_hvps = psd_interp_hvps['bin_width'].values
+        dD_hvps[np.isnan(dD_hvps)] = np.nan # dummy value for bins outside probe range
+
+        # normalize N(D) based on new bin widths
+        psd_interp_2ds['ND'] = (dD / dD_2ds) * psd_interp_2ds['ND']
+        psd_interp_2ds['ND'].values[np.isnan(psd_interp_2ds['ND'])] = 0.
+        psd_interp_hvps['ND'] = (dD / dD_hvps) * psd_interp_hvps['ND']
+        psd_interp_hvps['ND'].values[np.isnan(psd_interp_hvps['ND'])] = 0.
+        ND_temp = psd_interp_2ds['ND'].values + psd_interp_hvps['ND'].values
+        ND = xr.DataArray(
+            data = np.ma.masked_where(ND_temp == 0., ND_temp),
+            dims = ['size', 'time'],
+            coords = dict(
+                bin_center=bin_mid, bin_left=bin_min, bin_right=bin_max,
+                bin_width=dD, time=psd_interp_2ds.time),
+            attrs = psd_2ds['ND'].attrs
+        )
+
+        # compute weighted mean of aspect and area ratio distributions
+        psd_interp_2ds['area_ratio'].values[np.isnan(psd_interp_2ds['area_ratio'])] = 0.
+        psd_interp_hvps['area_ratio'].values[np.isnan(psd_interp_hvps['area_ratio'])] = 0.
+        ar_temp = psd_interp_2ds['area_ratio'].values + psd_interp_hvps['area_ratio'].values
+        ar = xr.DataArray(
+            data = np.ma.masked_where(ar_temp == 0., ar_temp),
+            dims = ['size', 'time'],
+            coords = dict(
+                bin_center=bin_mid, bin_left=bin_min, bin_right=bin_max,
+                bin_width=dD, time=psd_interp_2ds.time),
+            attrs = psd_interp_2ds['area_ratio'].attrs
+        )
+
+        psd_interp_2ds['aspect_ratio'].values[np.isnan(psd_interp_2ds['aspect_ratio'])] = 0.
+        psd_interp_hvps['aspect_ratio'].values[np.isnan(psd_interp_hvps['aspect_ratio'])] = 0.
+        asr_temp = psd_interp_2ds['aspect_ratio'].values + psd_interp_hvps['aspect_ratio'].values
+        asr = xr.DataArray(
+            data = np.ma.masked_where(asr_temp == 0., asr_temp),
+            dims = ['size', 'time'],
+            coords = dict(
+                bin_center=bin_mid, bin_left=bin_min, bin_right=bin_max,
+                bin_width=dD, time=psd_interp_2ds.time),
+            attrs = psd_interp_2ds['aspect_ratio'].attrs
+        )
+
+        # make the dataset object
+        psd_merged = xr.Dataset(
+            data_vars={
+                'ND': ND,
+                'area_ratio': ar,
+                'aspect_ratio': asr
+            },
+            coords={
+                'bin_center': bin_mid,
+                'bin_left': bin_min,
+                'bin_right': bin_max,
+                'bin_width': dD,
+                'weight_2ds': weight_2ds,
+                'weight_hvps': weight_hvps,
+                'time': psd_interp_2ds.time
+            },
+            attrs = psd_interp_2ds.attrs
+        )
+
+        return psd_merged
                 
     def bulk_properties(self, calc_gamma_params=False, matched_objects=None):
         """
