@@ -997,7 +997,7 @@ class Hiwrap(Radar):
 
         # mask values when aircraft is rolling
         if max_roll is not None:
-            self.mask_roll(max_roll)
+            self.data = self.mask_roll(max_roll)
 
 
     def readfile(self, filepath, start_time=None, end_time=None, dataset='2020'):
