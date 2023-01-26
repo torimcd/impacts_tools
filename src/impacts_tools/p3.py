@@ -95,11 +95,11 @@ class P3():
     A class to represent the P-3 aircraft during the IMPACTS field campaign.
     """
 
-    def __init__(self, filepath, date, start_time=None, end_time=None, tres='1S'):
+    def __init__(self, filepath, date, start_time=None, end_time=None, tres='1S', fmt='ames'):
         self.name = 'P-3 Met-Nav'
         
         # read the raw data
-        self.data = self.readfile(filepath, date, start_time, end_time, tres)
+        self.data = self.readfile(filepath, date, start_time, end_time, tres, fmt)
         """
         xarray.Dataset of P-3 meteorological and navigation variables and attributes
         Dimensions:
@@ -215,7 +215,7 @@ class P3():
 
         return hdr
     
-    def readfile(self, filepath, date, start_time=None, end_time=None, tres='1S'):
+    def readfile(self, filepath, date, start_time=None, end_time=None, tres='1S', fmt='ames'):
         """
         Reads the P-3 Met-Nav data file and unpacks the fields into an xarray.Dataset
         
@@ -231,65 +231,92 @@ class P3():
             The final time of interest
         tres: str
             The time interval to average over (e.g., '5S' for 5 seconds)
+        fmt: str
+            ames - NASA Ames format; iwg - IWG packet format (no headers)
         
         Returns
         -------
         data : xarray.Dataset
             The unpacked dataset
         """
-        
-        # get header info following the NASA AMES format
-        header = self.parse_header(open(filepath, 'r'), date)
-        
-        # parse the data
-        data_raw = np.genfromtxt(
-            filepath, delimiter=',', skip_header=int(header['NLHEAD']),
-            missing_values=header['VMISS'], usemask=True, filling_values=np.nan
-        )
+        if fmt == 'ames':
+            # get header info following the NASA AMES format
+            header = self.parse_header(open(filepath, 'r'), date)
 
-        # construct dictionary of variable data and metadata
-        readfile = {}
-        if len(header['VNAME']) != len(header['VSCAL']):
-            print(
-                'ALL variables must be read in this type of file. '
-                'Please check name_map to make sure it is the correct length.'
+            # parse the data
+            data_raw = np.genfromtxt(
+                filepath, delimiter=',', skip_header=int(header['NLHEAD']),
+                missing_values=header['VMISS'], usemask=True, filling_values=np.nan
             )
-        for jj, unit in enumerate(header['VUNIT']):
-            header['VUNIT'][jj] = unit.split(',')[0]
 
-        for jj, name in enumerate(header['VNAME']): # fix scaling and missing data flags for some vars
-            if (name=='True_Air_Speed' or name=='Indicated_Air_Speed'
-                    or name=='Mach_Number'):
-                header['VMISS'][jj] = -8888.
-            if name=='True_Air_Speed' and header['VUNIT'][jj]=='kts': # [m/s]
-                header['VMISS'][jj] = -8888. * 0.51
-                header['VSCAL'][jj] = 0.51
-                header['VUNIT'][jj] = 'm/s'
-            readfile[name] = np.array(data_raw[:, jj] * header['VSCAL'][jj])
-            # turn missing values to nan
-            readfile[name][readfile[name]==header['VMISS'][jj]] = np.nan
-        readfile['Wind_Speed'][readfile['Wind_Speed']==-8888.] = np.nan # wspd has two missing data flags
+            # construct dictionary of variable data and metadata
+            readfile = {}
+            if len(header['VNAME']) != len(header['VSCAL']):
+                print(
+                    'ALL variables must be read in this type of file. '
+                    'Please check name_map to make sure it is the correct length.'
+                )
+            for jj, unit in enumerate(header['VUNIT']):
+                header['VUNIT'][jj] = unit.split(',')[0]
 
-        # populate dataset attributes
-        p3_attrs = {
-            'Experiment': 'IMPACTS',
-            'Platform': 'P-3',
-            'Mission PI': 'Lynn McMurdie (lynnm@uw.edu)'}
-        instrum_info_counter = 1
-        for ii, comment in enumerate(header['NCOM'][:-1]): # add global attrs
-            parsed_comment = comment.split(':')
-            if len(parsed_comment) > 1:
-                p3_attrs[parsed_comment[0]] = parsed_comment[1][1:]
-            else: # handles multiple instrument info lines in *_R0.ict files
-                instrum_info_counter += 1
-                p3_attrs[
-                    'INSTRUMENT_INFO_'+str(instrum_info_counter)] = parsed_comment[0][1:]
+            for jj, name in enumerate(header['VNAME']): # fix scaling and missing data flags for some vars
+                if (name=='True_Air_Speed' or name=='Indicated_Air_Speed'
+                        or name=='Mach_Number'):
+                    header['VMISS'][jj] = -8888.
+                if name=='True_Air_Speed' and header['VUNIT'][jj]=='kts': # [m/s]
+                    header['VMISS'][jj] = -8888. * 0.51
+                    header['VSCAL'][jj] = 0.51
+                    header['VUNIT'][jj] = 'm/s'
+                readfile[name] = np.array(data_raw[:, jj] * header['VSCAL'][jj])
+                # turn missing values to nan
+                readfile[name][readfile[name]==header['VMISS'][jj]] = np.nan
+            readfile['Wind_Speed'][readfile['Wind_Speed']==-8888.] = np.nan # wspd has two missing data flags
+            
+            # compute time
+            time = np.array([
+                np.datetime64(date) + np.timedelta64(int(readfile['time'][i]), 's')
+                for i in range(len(readfile['time']))], dtype='datetime64[ms]'
+            )
 
-        # compute time
-        time = np.array([
-            np.datetime64(date) + np.timedelta64(int(readfile['time'][i]), 's')
-            for i in range(len(readfile['time']))], dtype='datetime64[ms]'
-        )
+            # populate dataset attributes
+            p3_attrs = {
+                'Experiment': 'IMPACTS',
+                'Platform': 'P-3',
+                'Mission PI': 'Lynn McMurdie (lynnm@uw.edu)'
+            }
+            instrum_info_counter = 1
+            for ii, comment in enumerate(header['NCOM'][:-1]): # add global attrs
+                parsed_comment = comment.split(':')
+                if len(parsed_comment) > 1:
+                    p3_attrs[parsed_comment[0]] = parsed_comment[1][1:]
+                else: # handles multiple instrument info lines in *_R0.ict files
+                    instrum_info_counter += 1
+                    p3_attrs[
+                        'INSTRUMENT_INFO_'+str(instrum_info_counter)] = parsed_comment[0][1:]
+        elif fmt == 'iwg':
+            names = [
+                'fmt', 'time', 'Latitude', 'Longitude', 'GPS_Altitude', 'WGS_84_Alt',
+                'Pressure_Altitude', 'Radar_Altitude', 'Ground_Speed', 'True_Air_Speed',
+                'Indicated_Air_Speed', 'Mach_Number', 'Vertical_Speed', 'True_Heading',
+                'Track_Angle', 'Drift_Angle', 'Pitch_Angle', 'Roll_Angle', 'Side_slip',
+                'Angle_of_Attack', 'Static_Air_Temp', 'Dew_Point', 'Total_Air_Temp',
+                'Static_Pressure', 'Dynamic_Press', 'Cabin_Pressure', 'Wind_Speed',
+                'Wind_Direction', 'Vert_Wind_Spd', 'Solar_Zenith_Angle',
+                'Aircraft_Sun_Elevation', 'Sun_Azimuth', 'Aircraft_Sun_Azimuth'
+            ]
+            dtypes = [
+                str, 'datetime64[s]', float, float, float, float, float, float, float, float,
+                float, float, float, float, float, float, float, float, float, float, float,
+                float, float, float, float, float, float, float, float, float, float, float,
+                float,
+            ]
+            readfile = np.genfromtxt(filepath, delimiter=',', names=names, dtype=dtypes)
+            time = readfile['time']
+            p3_attrs = {
+                'Experiment': 'IMPACTS',
+                'Platform': 'P-3',
+                'Mission PI': 'Lynn McMurdie (lynnm@uw.edu)'
+            }
 
         # populate data arrays
         lat = xr.DataArray(
@@ -411,25 +438,11 @@ class P3():
                 description='Total air temperature',
                 units='degrees_Celsius')
         )
-        pt = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Potential_Temp']), dims = ['time'],
-            coords = dict(time = time),
-            attrs = dict(
-                description='Potential temperature',
-                units='degrees_Kelvin')
-        )
         td = xr.DataArray(
             data = np.ma.masked_invalid(readfile['Dew_Point']), dims = ['time'],
             coords = dict(time = time),
             attrs = dict(
                 description='Dew point temperature',
-                units='degrees_Celsius')
-        )
-        t_ir = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['IR_Surf_Temp']), dims = ['time'],
-            coords = dict(time = time),
-            attrs = dict(
-                description='Infrared surface temperature',
                 units='degrees_Celsius')
         )
         pstat = xr.DataArray(
@@ -460,7 +473,35 @@ class P3():
                 description='Horizontal wind direction (clockwise from +y)',
                 units='degrees')
         )
-        if ('U' in readfile) and ('V' in readfile): # for 2022 data
+        zenith = xr.DataArray(
+            data = np.ma.masked_invalid(readfile['Solar_Zenith_Angle']), dims = ['time'],
+            coords = dict(time = time),
+            attrs = dict(
+                description='Solar zenith angle',
+                units='degrees')
+        )
+        sun_elev_ac = xr.DataArray(
+            data = np.ma.masked_invalid(readfile['Aircraft_Sun_Elevation']), dims = ['time'],
+            coords = dict(time = time),
+            attrs = dict(
+                description='Aircraft sun elevation',
+                units='degrees')
+        )
+        sun_az = xr.DataArray(
+            data = np.ma.masked_invalid(readfile['Sun_Azimuth']), dims = ['time'],
+            coords = dict(time = time),
+            attrs = dict(
+                description='Sun azimuth',
+                units='degrees')
+        )
+        sun_az_ac = xr.DataArray(
+            data = np.ma.masked_invalid(readfile['Aircraft_Sun_Azimuth']), dims = ['time'],
+            coords = dict(time = time),
+            attrs = dict(
+                description='Aircraft sun azimuth',
+                units='degrees')
+        )
+        if (fmt == 'ames') and ('U' in readfile) and ('V' in readfile): # for 2022 AMES data
             uwnd = xr.DataArray(
                 data = np.ma.masked_invalid(readfile['U']), dims = ['time'],
                 coords = dict(time = time),
@@ -492,69 +533,106 @@ class P3():
                     description='Horizontal V-component wind speed',
                     units='m/s')
             )
-        zenith = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Solar_Zenith_Angle']), dims = ['time'],
-            coords = dict(time = time),
-            attrs = dict(
-                description='Solar zenith angle',
-                units='degrees')
-        )
-        sun_elev_ac = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft_Sun_Elevation']), dims = ['time'],
-            coords = dict(time = time),
-            attrs = dict(
-                description='Aircraft sun elevation',
-                units='degrees')
-        )
-        sun_az = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Sun_Azimuth']), dims = ['time'],
-            coords = dict(time = time),
-            attrs = dict(
-                description='Sun azimuth',
-                units='degrees')
-        )
-        sun_az_ac = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft_Sun_Azimuth']), dims = ['time'],
-            coords = dict(time = time),
-            attrs = dict(
-                description='Aircraft sun azimuth',
-                units='degrees')
-        )
-        r = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Mixing_Ratio']), dims = ['time'],
-            coords = dict(time = time),
-            attrs = dict(
-                description='Mixing ratio',
-                units='g/kg')
-        )
-        pres_vapor = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Part_Press_Water_Vapor']), dims = ['time'],
-            coords = dict(time = time),
-            attrs = dict(
-                description='Partial pressure with respect to water vapor',
-                units='hPa')
-        )
-        es_h2o = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Sat_Vapor_Press_H2O']), dims = ['time'],
-            coords = dict(time = time),
-            attrs = dict(
-                description='Saturation vapor pressure with respect to water',
-                units='hPa')
-        )
-        es_ice = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Sat_Vapor_Press_Ice']), dims = ['time'],
-            coords = dict(time = time),
-            attrs = dict(
-                description='Saturation vapor pressure with respect to ice',
-                units='hPa')
-        )
-        rh = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Relative_Humidity']), dims = ['time'],
-            coords = dict(time = time),
-            attrs = dict(
-                description='Relative humidity with respect to water',
-                units='percent')
-        )
+        if fmt == 'ames': # NASA AMES format
+            r = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Mixing_Ratio']), dims = ['time'],
+                coords = dict(time = time),
+                attrs = dict(
+                    description='Mixing ratio',
+                    units='g/kg')
+            )
+            pres_vapor = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Part_Press_Water_Vapor']), dims = ['time'],
+                coords = dict(time = time),
+                attrs = dict(
+                    description='Partial pressure with respect to water vapor',
+                    units='hPa')
+            )
+            es_h2o = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Sat_Vapor_Press_H2O']), dims = ['time'],
+                coords = dict(time = time),
+                attrs = dict(
+                    description='Saturation vapor pressure with respect to water',
+                    units='hPa')
+            )
+            es_ice = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Sat_Vapor_Press_Ice']), dims = ['time'],
+                coords = dict(time = time),
+                attrs = dict(
+                    description='Saturation vapor pressure with respect to ice',
+                    units='hPa')
+            )
+            rh = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Relative_Humidity']), dims = ['time'],
+                coords = dict(time = time),
+                attrs = dict(
+                    description='Relative humidity with respect to water',
+                    units='percent')
+            )
+            pt = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Potential_Temp']), dims = ['time'],
+                coords = dict(time = time),
+                attrs = dict(
+                    description='Potential temperature',
+                    units='degrees_Kelvin')
+            )
+            t_ir = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['IR_Surf_Temp']), dims = ['time'],
+                coords = dict(time = time),
+                attrs = dict(
+                    description='Infrared surface temperature',
+                    units='degrees_Celsius')
+            )
+        elif fmt == 'iwg': # IWG1 packets don't have these vars
+            r = xr.DataArray(
+                data = np.ma.array(np.zeros(len(time)), mask=True), dims = ['time'],
+                coords = dict(time = time),
+                attrs = dict(
+                    description='Mixing ratio',
+                    units='g/kg')
+            )
+            pres_vapor = xr.DataArray(
+                data = np.ma.array(np.zeros(len(time)), mask=True), dims = ['time'],
+                coords = dict(time = time),
+                attrs = dict(
+                    description='Partial pressure with respect to water vapor',
+                    units='hPa')
+            )
+            es_h2o = xr.DataArray(
+                data = np.ma.array(np.zeros(len(time)), mask=True), dims = ['time'],
+                coords = dict(time = time),
+                attrs = dict(
+                    description='Saturation vapor pressure with respect to water',
+                    units='hPa')
+            )
+            es_ice = xr.DataArray(
+                data = np.ma.array(np.zeros(len(time)), mask=True), dims = ['time'],
+                coords = dict(time = time),
+                attrs = dict(
+                    description='Saturation vapor pressure with respect to ice',
+                    units='hPa')
+            )
+            rh = xr.DataArray(
+                data = np.ma.array(np.zeros(len(time)), mask=True), dims = ['time'],
+                coords = dict(time = time),
+                attrs = dict(
+                    description='Relative humidity with respect to water',
+                    units='percent')
+            )
+            pt = xr.DataArray(
+                data = np.ma.array(np.zeros(len(time)), mask=True), dims = ['time'],
+                coords = dict(time = time),
+                attrs = dict(
+                    description='Potential temperature',
+                    units='degrees_Kelvin')
+            )
+            t_ir = xr.DataArray(
+                data = np.ma.array(np.zeros(len(time)), mask=True), dims = ['time'],
+                coords = dict(time = time),
+                attrs = dict(
+                    description='Infrared surface temperature',
+                    units='degrees_Celsius')
+            )
         
         # put everything together into an XArray Dataset
         ds = xr.Dataset(
@@ -600,6 +678,9 @@ class P3():
             },
             attrs=p3_attrs
         )
+        
+        if fmt == 'iwg': # remove duplicate times (bad data)
+            ds = ds.drop_duplicates('time')
         
         # trim the dataset if needed
         if (start_time is not None) or (end_time is not None):
