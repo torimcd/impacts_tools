@@ -2763,7 +2763,7 @@ class Psd(Instrument):
           A datetime object which corresponds to the given value `time_hhmmss`.
         """
         year = np.tile(int(date[:4]), (len(time_hhmmss)))
-        month = np.tile(int(date[:5:7]), (len(time_hhmmss)))
+        month = np.tile(int(date[5:7]), (len(time_hhmmss)))
         day = np.tile(int(date[8:]), (len(time_hhmmss)))
         hour = (time_hhmmss / 10000).astype(int)
         minute = ((time_hhmmss % 10000) / 100).astype(int)
