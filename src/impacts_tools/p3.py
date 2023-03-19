@@ -2373,7 +2373,9 @@ class Psd(Instrument):
                 mass_particle ** 2 * self.data['count'] / self.data['sv']
             ).sum(dim='size') # simulated Z (mm^6 m^-3)
             iwc_bf_temp = 10. ** 6 * (mass_bf / self.data['sv']).sum(dim='size') # IWC (g m-3)
-            dmm_bf_temp = self.data['bin_center'][(0.5 - mass_rel_bf).argmin(dim='size')] # med mass D (mm)
+            dmm_bf_temp = xr.full_like(nt_temp, np.nan) # allocate array of nan
+            dmm_bf_temp[~np.isnan(mass_rel_bf[-1,:])] = self.data['bin_center'][
+            	(0.5 - mass_rel_bf[:, ~np.isnan(mass_rel_bf[-1,:])]).argmin(dim='size')] # med mass D (mm)
             dm_bf_temp = 10. * (
                 (self.data['bin_center'] / 10.) * mass_bf /
                 self.data['sv']).sum(dim='size') / (
@@ -2418,7 +2420,9 @@ class Psd(Instrument):
                 mass_particle ** 2 * self.data['count'] / self.data['sv']
             ).sum(dim='size') # simulated Z (mm^6 m^-3)
             iwc_hy_temp = 10. ** 6 * (mass_hy / self.data['sv']).sum(dim='size') # IWC (g m-3)
-            dmm_hy_temp = self.data['bin_center'][(0.5 - mass_rel_hy).argmin(dim='size')] # med mass D (mm)
+            dmm_hy_temp = xr.full_like(nt_temp, np.nan) # allocate array of nan
+            dmm_hy_temp[~np.isnan(mass_rel_hy[-1,:])] = self.data['bin_center'][
+            	(0.5 - mass_rel_hy[:, ~np.isnan(mass_rel_hy[-1,:])]).argmin(dim='size')] # med mass D (mm)
             dm_hy_temp = 10. * (
                 (self.data['bin_center'] / 10.) * mass_hy /
                 self.data['sv']).sum(dim='size') / (
