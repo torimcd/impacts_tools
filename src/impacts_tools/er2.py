@@ -245,6 +245,123 @@ class Radar(ABC):
             Tuples of the start and end time of each flight leg.
         """
         pass # not yet implemented
+    
+class Lidar(ABC):
+    """ 
+    A class to represent the lidar flown on the ER-2 aircraft during IMAPCTS.
+    Lidar is an Abstract Base Class - meaning we always require a more specific class 
+    to be instantiated - ie you have to call Crs(), you can't just call Lidar()
+
+    Parameters
+    ----------
+    data : xarray.Dataset()
+        Lidar data and attributes
+
+    """
+
+    @abstractmethod     # this stops you from being able to make a new generic lidar
+    def __init__(self):
+        """
+        This is an abstract method since only inherited classes will be used to instantiate Lidar objects.
+        """
+        self.name = None
+        self.data = None
+
+
+    @abstractmethod
+    def readfile(self, filepath):
+        """
+        This is an abstract method since only inherited classes will be used to read radar data into objects.
+        """
+        pass
+
+
+    def mask_roll(self, max_roll):
+        """
+        Mask values in the dataset where the roll angle of the ER2 is greater
+        than the maximum value provided
+
+        Parameters
+        ----------
+        max_roll : float
+            The maximum roll angle of the aircraft in degrees
+        """
+
+        # retain where the plane is not rolling more than the max provided
+        return self.data.where(abs(self.data['er2_roll']) < max_roll)
+
+
+    def despeckle(self, data_array=None, sigma=1.):
+        """
+        Despeckle the lidar data by applying a Gaussion filter with a given standard deviation
+
+        Parameters
+        ----------
+        data_array : xarray.DataArray()
+            The field to despeckle
+        sigma : float
+            The standard deviation to apply to the gaussian filter
+        """
+        temp_datacopy =  data_array.copy()
+
+        # run the data array through a gaussian filter
+        temp_datafiltered = gaussian_filter(temp_datacopy, sigma)
+
+        # np.isfinite returns values that are not NAN or INF
+        return data_array.where(np.isfinite(temp_datafiltered))
+    
+    def trim_time_bounds(self, start_time=None, end_time=None):
+        """
+        Put the dataset into the specified time bounds.
+        
+        Parameters
+        ----------
+        start_time : np.datetime64 or None
+            The initial time of interest
+        end_time : np.datetime64 or None
+            The final time of interest
+        Returns
+        -------
+        data : xarray.Dataset
+            The reindexed dataset
+        """
+        
+        if (start_time is not None) or (end_time is not None):      
+            # compute dataset timedelta
+            td_ds = pd.to_timedelta(
+                self.data['time'][1].values - self.data['time'][0].values
+            )
+            
+            # format start and end times
+            if start_time is None:
+                start_time = self.data['time'][0].values
+                
+            if end_time is None:
+                end_time = self.data['time'][-1].values
+
+            # generate upsampled datetime array based on dataset frequency
+            if pd.Timedelta(tres) != pd.Timedelta(1, 's'):
+                end_time -= td_ds
+            dummy_times = xr.Dataset(
+                coords={
+                    'time': pd.date_range(
+                        start=start_time, end=end_time, freq=td_ds
+                    )
+                }
+            )
+
+            return self.data.interp_like(dummy_times)
+        
+    def get_flight_legs(self):
+        """
+        Get the start and end time stamps for each leg of this flight.
+
+        Returns
+        -------
+        flight_leg : list of tuples
+            Tuples of the start and end time of each flight leg.
+        """
+        pass # not yet implemented
         
 
 
@@ -2384,7 +2501,251 @@ class Exrad(Radar):
         
         return self.data
 
-    
+# ====================================== #
+# CPL
+# ====================================== #
+
+class Cpl(Lidar):
+    """
+    A class to represent the CPL lidar flown on the ER2 during the IMPACTS field campaign.
+    Inherits from Lidar()
+
+    Parameters
+    ----------
+    filepath(s): str
+        File path to the CPL data file
+    start_time: np.datetime64 or None
+        The initial time of interest eg. if looking at a single flight leg
+    end_time: np.datetime64 or None
+        The final time of interest eg. if looking at a single flight leg
+    max_roll : float or None
+        The maximum roll angle of the aircraft in degrees, used to mask times with the aircraft is turning and the radars are off-nadir
+    atb_sigma: float or None
+        The standard deviation to use in despeckling the total attenuated backscatter (L1B data, all wavelengths).
+        Data above threshold is masked using a Gaussian filter.
+    """
+
+    def __init__(self, filepath, start_time=None, end_time=None, max_roll=None,
+                 atb_sigma=None):
+        # read the raw data
+        if 'ATB' in filepath:
+            self.name = 'CPL ATB'
+            self.data = self.readfile_atb(filepath, start_time, end_time)
+            """
+            xarray.Dataset of lidar variables and attributes
+
+            Dimensions:
+                - gate: xarray.DataArray(float) - The lidar gate number  
+                - time: np.array(np.datetime64[ns]) - The UTC time stamp
+
+            Coordinates:
+                - gate (gate): xarray.DataArray(float) - The lidar gate number  
+                - height (range, time): xarray.DataArray(float) - Altitude of each range gate (m)  
+                - time (time): np.array(np.datetime64[ns]) - The UTC time stamp  
+                - distance (time): xarray.DataArray(float) - Along-track distance from the flight origin (m)
+                - lat (time): xarray.DataArray(float) - Latitude (degrees)
+                - lon (time): xarray.DataArray(float) - Longitude (degrees)
+
+            Variables:
+                - atb_1064 (gate, time) : xarray.DataArray(float) - Attenuated total backscatter (km**-1 sr**-1) profile at 1064 nm for each record
+                - atb_532 (gate, time) : xarray.DataArray(float) - Attenuated total backscatter (km**-1 sr**-1) profile at 532 nm for each record
+                - atb_355 (gate, time) : xarray.DataArray(float) - Attenuated total backscatter (km**-1 sr**-1) profile at 355 nm for each record
+
+            Attribute Information:
+                Experiment, Date, Aircraft, Lidar Name, Data Contact, Instrument PI, Mission PI,
+                L1B Calibration Source, vertical_resolution
+            """
+            
+            if atb_sigma is not None:
+                for var in ['atb_1064', 'atb_532', 'atb_355']:
+                    self.data[var] = self.despeckle(self.data[var], atb_sigma)
+
+        # trim dataset based on specified start/end
+        if (start_time is not None) or (end_time is not None):
+            self.data = self.trim_time_bounds(start_time, end_time, tres)
+            
+        # mask values when aircraft is rolling
+        if max_roll is not None:
+            self.data = self.mask_roll(max_roll)
+
+
+    def readfile_atb(self, filepath, start_time=None, end_time=None):
+        """
+        Reads the HIWRAP data file and unpacks the fields into an xarray.Dataset
+
+        Parameters
+        ----------
+
+        filepath : str
+            Path to the data file (tuple of str for 2022 HIWRAP Ku- and Ka-bands)
+        start_time : np.datetime64 or None
+            The initial time of interest
+        end_time : np.datetime64 or None
+            The final time of interest
+        dataset  : str
+            Four-digit deployment year for handling radar variables/metadata
+        
+        Returns
+        -------
+        data : xarray.Dataset
+            The unpacked dataset
+        """  
+        hdf = h5py.File(filepath, 'r')
+        
+        # construct the time array
+        db_str, y_str = hdf['Date'][()].decode('UTF-8').split()
+        date = pd.to_datetime(f'{db_str} {y_str}', format='%d%b %Y').to_pydatetime()
+        dt = np.array(
+            [date + timedelta(
+                hours=int(hdf['Hour'][i]), minutes=int(hdf['Minute'][i]), seconds=int(hdf['Second'][i])
+            ) for i in range(hdf['Hour'].shape[0])], dtype='datetime64[ms]'
+        )
+        
+        # aircraft nav information
+        lat = xr.DataArray(
+            data = hdf['Latitude'][:],
+            dims = ['time'],
+            coords = dict(time=dt),
+            attrs = dict(
+                description='Latitude',
+                units = 'degrees'
+            )
+        )
+        lon = xr.DataArray(
+            data = hdf['Longitude'][:],
+            dims = ['time'],
+            coords = dict(time=dt),
+            attrs = dict(
+                description='Latitude',
+                units = 'degrees'
+            )
+        )
+        altitude = xr.DataArray(
+            data = 1000.* (hdf['Plane_Alt'][:-1] + hdf['Plane_Alt'][1:]) / 2., # midpoint
+            dims = ['time'],
+            coords = dict(time=dt),
+            attrs = dict(
+                description='Height of the aircraft above mean sea level',
+                units = 'm'
+            )
+        )
+        heading = xr.DataArray(
+            data = (hdf['Plane_Heading'][:-1] + hdf['Plane_Heading'][1:]) / 2., # midpoint
+            dims = ['time'],
+            coords = dict(time=dt),
+            attrs = dict(
+                description='Plane heading (clockwise from North)',
+                units = 'degrees'
+            )
+        )
+        roll = xr.DataArray(
+            data = (hdf['Plane_Roll'][:-1] + hdf['Plane_Roll'][1:]) / 2., # midpoint
+            dims = ['time'],
+            coords = dict(time=dt),
+            attrs = dict(
+                description='Plane roll (right turn is positive)',
+                units = 'degrees'
+            )
+        )
+        
+        # lidar information
+        hght1d = 1000. * hdf['Bin_Alt'][:] # this is the second dimension on product data
+        hght2d = np.tile(np.atleast_2d(hght1d).T, (1, len(dt)))
+
+        height = xr.DataArray(
+            data = hght2d,
+            dims = ['gate', 'time'],
+            coords = dict(
+                gate = np.arange(len(hght1d)),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Height of each lidar range gate',
+                units='m'
+            )
+        )
+
+        atb1064 = xr.DataArray(
+            data = np.ma.masked_where(hdf['ATB_1064'][:].T == 0., hdf['ATB_1064'][:].T),
+            dims = ['gate', 'time'],
+            coords = dict(
+                gate = np.arange(len(hght1d)),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Attenuated total backscatter profile at 1064 nm for each record',
+                units='km**-1 sr**-1'
+            )
+        )
+
+        atb532 = xr.DataArray(
+            data = np.ma.masked_where(hdf['ATB_532'][:].T == 0., hdf['ATB_532'][:].T),
+            dims = ['gate', 'time'],
+            coords = dict(
+                gate = np.arange(len(hght1d)),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Attenuated total backscatter profile at 532 nm for each record',
+                units='km**-1 sr**-1'
+            )
+        )
+
+        atb355 = xr.DataArray(
+            data = np.ma.masked_where(hdf['ATB_355'][:].T == 0., hdf['ATB_355'][:].T),
+            dims = ['gate', 'time'],
+            coords = dict(
+                gate = np.arange(len(hght1d)),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Attenuated total backscatter profile at 355 nm for each record',
+                units='km**-1 sr**-1'
+            )
+        )
+        
+        # metadata for attributes
+        experiment = hdf['Project'][()].decode('UTF-8')
+        L1B_Version = hdf['L1B_Version'][()].decode('UTF-8')
+        vert_resolution = hdf['Bin_Width'][()]
+        hdf.close()
+        
+        # construct the dataset
+        ds = xr.Dataset(
+            data_vars={
+                'atb_1064': atb1064,
+                'atb_532': atb532,
+                'atb_355': atb355,
+                'er2_altitude': altitude,
+                'er2_heading': heading,
+                'er2_roll': roll
+            },
+            coords={
+                'gate': np.arange(len(hght1d)),
+                'height': height,
+                'time': dt,
+                'lon': lon,
+                'lat': lat,
+            },
+            attrs = {
+                'Experiment': experiment,
+                'Date': datetime.strftime(date, '%Y-%m-%d'),
+                'Aircraft': 'ER-2',
+                'Lidar Name': 'CPL',
+                'Data Contact': 'Patrick Selmer',
+                'Instrument PI': 'Matthew McGill',
+                'Mission PI': 'Lynn McMurdie',
+                'L1B Calibration Source': L1B_Version,
+                'vertical_resolution': f'{vert_resolution:.2f} m'
+            }
+        )
+        
+        return ds
+        
 
 class VAD(object):
     """
