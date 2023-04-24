@@ -349,8 +349,33 @@ class Lidar(ABC):
                     )
                 }
             )
+            
+            ds_sub = self.data.interp_like(dummy_times)
+            
+            # compute along track distance and add to dataset
+            from pyproj import Proj, transform, Geod
+            geod = Geod(ellps='WGS84')
 
-            return self.data.interp_like(dummy_times)
+            dist_delta = np.zeros(len(ds_sub['lat']))
+            for i in range(len(dist_delta) - 1):
+                _, _, dist_delta[i + 1] = geod.inv(
+                    ds_sub['lon'][i].values, ds_sub['lat'][i].values,
+                    ds_sub['lon'][i + 1].values, ds_sub['lat'][i + 1].values
+                )
+            dist = xr.DataArray(
+                data = np.cumsum(dist_delta),
+                dims = 'time',
+                coords = dict(
+                    time = ds_sub.time,
+                    lat = ds_sub.lat,
+                    lon = ds_sub.lon),
+                attrs = dict(
+                    description='Distance along flight path (pyproj inverse transform)',
+                    units='m'
+                )
+            )
+
+            return ds_sub.assign_coords(distance=dist)
         
     def get_flight_legs(self):
         """
