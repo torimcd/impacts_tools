@@ -7,6 +7,7 @@ import h5netcdf
 import julian
 import numpy as np
 import xarray as xr
+import pandas as pd
 from datetime import datetime, timedelta
 from abc import ABC, abstractmethod
 from scipy.ndimage import gaussian_filter, gaussian_filter1d
@@ -267,15 +268,6 @@ class Lidar(ABC):
         self.name = None
         self.data = None
 
-
-    @abstractmethod
-    def readfile(self, filepath):
-        """
-        This is an abstract method since only inherited classes will be used to read radar data into objects.
-        """
-        pass
-
-
     def mask_roll(self, max_roll):
         """
         Mask values in the dataset where the roll angle of the ER2 is greater
@@ -310,7 +302,7 @@ class Lidar(ABC):
         # np.isfinite returns values that are not NAN or INF
         return data_array.where(np.isfinite(temp_datafiltered))
     
-    def trim_time_bounds(self, start_time=None, end_time=None):
+    def trim_time_bounds(self, start_time=None, end_time=None, tres='1S'):
         """
         Put the dataset into the specified time bounds.
         
@@ -339,18 +331,10 @@ class Lidar(ABC):
             if end_time is None:
                 end_time = self.data['time'][-1].values
 
-            # generate upsampled datetime array based on dataset frequency
+            # generate trimmed dataset based on time bounds
             if pd.Timedelta(tres) != pd.Timedelta(1, 's'):
                 end_time -= td_ds
-            dummy_times = xr.Dataset(
-                coords={
-                    'time': pd.date_range(
-                        start=start_time, end=end_time, freq=td_ds
-                    )
-                }
-            )
-            
-            ds_sub = self.data.interp_like(dummy_times)
+            ds_sub = self.data.sel(time=slice(start_time, end_time))
             
             # compute along track distance and add to dataset
             from pyproj import Proj, transform, Geod
@@ -2587,7 +2571,7 @@ class Cpl(Lidar):
 
         # trim dataset based on specified start/end
         if (start_time is not None) or (end_time is not None):
-            self.data = self.trim_time_bounds(start_time, end_time, tres)
+            self.data = self.trim_time_bounds(start_time, end_time)
             
         # mask values when aircraft is rolling
         if max_roll is not None:
@@ -2596,19 +2580,17 @@ class Cpl(Lidar):
 
     def readfile_atb(self, filepath, start_time=None, end_time=None):
         """
-        Reads the HIWRAP data file and unpacks the fields into an xarray.Dataset
+        Reads the CPL L1B data file and unpacks the fields into an xarray.Dataset
 
         Parameters
         ----------
 
         filepath : str
-            Path to the data file (tuple of str for 2022 HIWRAP Ku- and Ka-bands)
+            Path to the data file
         start_time : np.datetime64 or None
             The initial time of interest
         end_time : np.datetime64 or None
             The final time of interest
-        dataset  : str
-            Four-digit deployment year for handling radar variables/metadata
         
         Returns
         -------
@@ -2618,11 +2600,16 @@ class Cpl(Lidar):
         hdf = h5py.File(filepath, 'r')
         
         # construct the time array
-        db_str, y_str = hdf['Date'][()].decode('UTF-8').split()
-        date = pd.to_datetime(f'{db_str} {y_str}', format='%d%b %Y').to_pydatetime()
+        try:
+            y_str = hdf['Date'][()].decode('UTF-8').split()[-1]
+        except:
+            dby_str = [chr(hdf['Date'][i]) for i in range(len(hdf['Date'][()]))]
+            y_str = ''.join(dby_str).split()[-1]
+        date = pd.to_datetime(f'{y_str}', format='%Y').to_pydatetime()
         dt = np.array(
             [date + timedelta(
-                hours=int(hdf['Hour'][i]), minutes=int(hdf['Minute'][i]), seconds=int(hdf['Second'][i])
+                days=int(hdf['Dec_JDay'][i]) - 1, hours=int(hdf['Hour'][i]),
+                minutes=int(hdf['Minute'][i]), seconds=int(hdf['Second'][i])
             ) for i in range(hdf['Hour'].shape[0])], dtype='datetime64[ms]'
         )
         
@@ -2645,8 +2632,12 @@ class Cpl(Lidar):
                 units = 'degrees'
             )
         )
+        if len(hdf['Plane_Alt'][()]) == len(dt):
+            alt_data = 1000. * hdf['Plane_Alt'][()]
+        else: # take the midpoint
+            alt_data = 1000.* (hdf['Plane_Alt'][:-1] + hdf['Plane_Alt'][1:]) / 2.
         altitude = xr.DataArray(
-            data = 1000.* (hdf['Plane_Alt'][:-1] + hdf['Plane_Alt'][1:]) / 2., # midpoint
+            data = alt_data,
             dims = ['time'],
             coords = dict(time=dt),
             attrs = dict(
@@ -2654,8 +2645,12 @@ class Cpl(Lidar):
                 units = 'm'
             )
         )
+        if len(hdf['Plane_Heading'][()]) == len(dt):
+            heading_data = hdf['Plane_Heading'][()]
+        else: # take the midpoint
+            heading_data = (hdf['Plane_Heading'][:-1] + hdf['Plane_Heading'][1:]) / 2.
         heading = xr.DataArray(
-            data = (hdf['Plane_Heading'][:-1] + hdf['Plane_Heading'][1:]) / 2., # midpoint
+            data = heading_data,
             dims = ['time'],
             coords = dict(time=dt),
             attrs = dict(
@@ -2663,8 +2658,12 @@ class Cpl(Lidar):
                 units = 'degrees'
             )
         )
+        if len(hdf['Plane_Roll'][()]) == len(dt):
+            roll_data = hdf['Plane_Roll'][()]
+        else: # take the midpoint
+            roll_data = (hdf['Plane_Roll'][:-1] + hdf['Plane_Roll'][1:]) / 2.
         roll = xr.DataArray(
-            data = (hdf['Plane_Roll'][:-1] + hdf['Plane_Roll'][1:]) / 2., # midpoint
+            data = roll_data,
             dims = ['time'],
             coords = dict(time=dt),
             attrs = dict(
@@ -2734,8 +2733,18 @@ class Cpl(Lidar):
         )
         
         # metadata for attributes
-        experiment = hdf['Project'][()].decode('UTF-8')
-        L1B_Version = hdf['L1B_Version'][()].decode('UTF-8')
+        try:
+            experiment = hdf['Project'][()].decode('UTF-8')
+        except:
+            experiment = ''.join(
+                [chr(hdf['Project'][i]) for i in range(len(hdf['Project'][()]))]
+            )
+        try:
+            L1B_Version = hdf['L1B_Version'][()].decode('UTF-8')
+        except:
+            L1B_Version = ''.join(
+                [chr(hdf['L1B_Version'][i]) for i in range(len(hdf['L1B_Version'][()]))]
+            )
         vert_resolution = hdf['Bin_Width'][()]
         hdf.close()
         

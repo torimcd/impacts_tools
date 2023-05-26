@@ -169,23 +169,28 @@ class Match(ABC):
         
         return ds
     
-    def qc_lidar(self, lidar_object, alt_mean_p3=None):
+    def qc_lidar(self, lidar_object, alt_bounds_p3):
         """
         xarray.Dataset (1-D) of QC'd lidar data, with bad values removed
-        """
-        mask = np.ones(lidar_object[lidar_object.data_vars[0]].shape, dtype=bool)
         
-        # mask pixels > 250 m above/below P-3 altitude (optional)
+        Parameters
+        ----------
+        lidar_object: impacts_tools.er2.Cpl(Lidar).Dataset object
+        
+        alt_bounds_p3: tuple
+            Minimum and maximum P-3 altitude (m) for flight segment.
+        """
+        mask = np.ones(lidar_object[list(lidar_object.data_vars)[0]].shape, dtype=bool)
+        
+        # mask pixels > 50 m below (above) min (max) P-3 altitude
         if self.name == 'Matched CPL ATB':
             mask[
+                (lidar_object['height'].values >= alt_bounds_p3[0] - 50.) &
+                (lidar_object['height'].values <= alt_bounds_p3[1] + 50.) &
                 (lidar_object['atb_1064'].values >= 5.e-4) &
                 (lidar_object['atb_1064'].values >= 5.e-4) &
                 (lidar_object['atb_1064'].values >= 5.e-4) &
                 (lidar_object['height'].values >= 500.)] = False
-            if alt_mean_p3 is not None: # mask pixels > 250 m above/below P-3 alt
-                mask[
-                    np.abs(lidar_object['height'].values - alt_mean_p3) <= 250.
-                ] = False
         
         # build 1D dataset with select lidar vars
         gate_idx = np.arange(mask.shape[0] * mask.shape[1])
@@ -203,7 +208,7 @@ class Match(ABC):
         hght = xr.DataArray(
             data =  lidar_object['height'].values.flatten(),
             dims = 'gate_idx',
-            attrs = radar_object['lat'].attrs
+            attrs = lidar_object['lat'].attrs
         )
         dist_raw = (
             xr.DataArray(np.ones(lidar_object.dims['gate']), dims=('gate')) *
@@ -216,7 +221,7 @@ class Match(ABC):
         lat = xr.DataArray(
             data =  (
                 xr.DataArray(np.ones(lidar_object.dims['gate']), dims=('gate')) *
-                lidar_object['lat']).values.flatten(),
+               lidar_object['lat']).values.flatten(),
             dims = 'gate_idx',
             attrs = lidar_object['lat'].attrs
         )
@@ -231,7 +236,7 @@ class Match(ABC):
             atb1064 = xr.DataArray(
                 data =  (
                     xr.DataArray(np.ones(lidar_object.dims['gate']), dims=('gate')) *
-                    lidar_object['atb_1064']).values.flatten(),
+                   lidar_object['atb_1064']).values.flatten(),
                 dims = 'gate_idx',
                 coords = dict(
                     time = time_flat, height = hght, distance = dist,
@@ -246,7 +251,7 @@ class Match(ABC):
                 coords = dict(
                     time = time_flat, height = hght, distance = dist,
                     lat = lat, lon = lon),
-                attrs = lidar_object['atb_532'].attrs
+                attrs =lidar_object['atb_532'].attrs
             )
             atb355 = xr.DataArray(
                 data =  (
@@ -258,7 +263,7 @@ class Match(ABC):
                     lat = lat, lon = lon),
                 attrs = lidar_object['atb_355'].attrs
             )
-            data_vars = {'atb_1064': atb1064, 'atb_532': atb532, 'atb_532': atb532}
+            data_vars = {'atb_1064': atb1064, 'atb_532': atb532, 'atb_355': atb355}
         ds = xr.Dataset(
             data_vars = data_vars,
             coords = {
@@ -290,6 +295,8 @@ class Match(ABC):
         lid_x, lid_y = p(lidar_qc['lon'].values, lidar_qc['lat'].values)
         p3_x, p3_y = p(p3_object['lon'].values, p3_object['lat'].values)
         
+        if len(lid_x) == 0: # no available lidar data, skip rest of routine
+            return None
         # perform the kdtree search
         kdt = cKDTree(
             list(zip(lid_x, lid_y, lidar_qc['height'].values)), leafsize=16
@@ -301,7 +308,7 @@ class Match(ABC):
         )
         
         # remove matched data outside of defined bounds
-        bad_inds = np.where(prind1d == lidar_qc[lidar_qc.data_vars[0]].shape)
+        bad_inds = np.where(prind1d == lidar_qc[list(lidar_qc.data_vars)[0]].shape)
         if ((query_k == 1) and (len(bad_inds[0]) > 0)) or (
                 (query_k > 1) and (len(bad_inds[0]) > 0)) or (
                 (query_k > 1) and (len(bad_inds[1]) > 0)):
@@ -312,20 +319,17 @@ class Match(ABC):
         # mask data outside distance bounds
         if self.name == 'Matched CPL ATB':
             match_dict = {}
-            
             for wavelength in [1064, 532, 355]:
-                match_dict = {
-                    f'atb_{wavelength}': dict(
-                        data = np.ma.masked_where(
-                            prind1d == 0, lidar_qc[f'atb_{wavelength}'].values[prind1d]
-                        ),
-                        description = (
-                            'Mean attenuated total backscatter profile at '
-                            f'{wavelength} nm among matched lidar gates'
-                        ),
-                        units = 'km**-1 sr**-1'
-                    )
-                }
+                match_dict[f'atb_{wavelength}'] = dict(
+                    data = np.ma.masked_where(
+                        prind1d == 0, lidar_qc[f'atb_{wavelength}'].values[prind1d]
+                    ),
+                    description = (
+                        'Mean attenuated total backscatter profile at '
+                        f'{wavelength} nm among matched lidar gates'
+                    ),
+                    units = 'km**-1 sr**-1'
+                )
             
         # perform the matching routine
         if query_k == 1: # nearest neighbor
@@ -395,7 +399,7 @@ class Match(ABC):
             )
             w1 = np.ma.sum(W_d_k2 * lidar_qc['height'].values[prind1d], axis=1)
             w2 = np.ma.sum(W_d_k2, axis=1)
-            alt_radar_matched = w1 / w2
+            alt_lidar_matched = w1 / w2
             
         # along track distance
         nomdist = np.zeros(len(p3_object['time']))
@@ -406,15 +410,16 @@ class Match(ABC):
                 ]
         
         # mask data
-        # mask_altdiff = np.abs(
-        #     alt_radar_matched.data - p3_object['alt_gps'].values
-        # ) > 100. # mean gate alt > 100 m from P-3 alt
+        mask_altdiff = np.abs(
+            alt_lidar_matched.data - p3_object['alt_gps'].values
+        ) > 100. # mean gate alt > 100 m from P-3 alt
         mask_tdiff = np.abs(tdiff_matched) > time_thresh # time offset too big
         if self.name == 'Matched CPL ATB':
             mask_final = (
                 np.isnan(match_dict['atb_1064']['data']) +
                 np.isnan(match_dict['atb_532']['data']) +
-                np.isnan(match_dict['atb_355']['data']) + mask_tdiff.data
+                np.isnan(match_dict['atb_355']['data']) +
+                mask_tdiff.data + mask_altdiff
             )
             
         # establish the data arrays
@@ -436,7 +441,16 @@ class Match(ABC):
                 units = 'm'
             )
         )
-        ddiff = xr.DataArray(
+        alt_lidar = xr.DataArray(
+            data = np.ma.masked_where(mask_final, alt_lidar_matched),
+            dims = 'time',
+            attrs = dict(
+                description = 'Mean altitdue of the matched lidar gates ',
+                units = 'm'
+            )
+        )
+        data_vars = {}
+        data_vars['dist_offset'] = xr.DataArray(
             data = np.ma.masked_where(mask_final, dist_matched),
             dims = 'time',
             coords = dict(time = time, time_lidar = time_lidar),
@@ -445,7 +459,7 @@ class Match(ABC):
                 units = 'm'
             )
         )
-        tdiff = xr.DataArray(
+        data_vars['time_offset'] = xr.DataArray(
             data = np.ma.masked_where(mask_final, tdiff_matched),
             dims = 'time',
             coords = dict(time = time, time_lidar = time_lidar),
@@ -454,7 +468,6 @@ class Match(ABC):
                 units = 's'
             )
         )
-        data_vars = {}
         for wavelength in [1064, 532, 355]:
             data_vars[f'atb_{wavelength}'] = xr.DataArray(
                 data = np.ma.masked_where(mask_final, match_dict[f'atb_{wavelength}']['data']),
@@ -471,8 +484,9 @@ class Match(ABC):
             data_vars = data_vars,
             coords = {
                 'time': time,
-                'time_radar': time_lidar,
-                'distance': dist_lidar
+                'time_lidar': time_lidar,
+                'distance': dist_lidar,
+                'altitude': alt_lidar
             },
             attrs = {
                 'distance_max': f'{dist_thresh:.0f} m',
@@ -893,7 +907,7 @@ class MatchLidar(ABC):
 # ====================================== #
 # HIWRAP
 # ====================================== #
-class Hiwrap(MatchRadar):
+class Hiwrap(Match):
     """
     A class to represent the TAMMS flown on the P-3 during the IMPACTS field campaign.
     Inherits from Instrument()
@@ -949,4 +963,49 @@ class Hiwrap(MatchRadar):
             - dfr_ku_ka (time) : xarray.DataArray(float) - Matched dual frequency ratio (dB)
         """
         
+# ====================================== #
+# CPL
+# ====================================== #
+class Cpl(Match):
+    """
+    A class to represent the CPL data matched to the P-3 position during the IMPACTS field campaign.
+    Inherits from Match()
     
+    Parameters
+    ----------
+    lidar_object: impacts_tools.er2.Cpl(Lidar).data xarray dataset object
+        The time-trimmed CPL lidar object
+    p3_object: impacts_tools.p3.P3().data xarray dataset object
+        The time-trimmed P-3 Met-Nav object
+    query_k: int
+        Number of radar gates considered in the average (1 - nearest neighbor)
+    dist_thresh: float
+        Maximum distance (m) allowed in the kdTree search
+    time_thresh: None or float
+        Maximum time offset (s) between ER-2 and P-3 allowed for matched instance
+    qc: bool
+        True - remove gates with high dbz gradient, no dbz, low spw
+        False - only remove gates with no dbz
+    ref_coords: None or 2-element tuple of float
+        Reference lat, lon pair (deg) to project ER-2 and P-3 points to cartesian grid.
+        None defaults to first lat, lon point in P-3 object
+    """
+    
+    def __init__(
+            self, lidar_object, p3_object, query_k=1, dist_thresh=4000.,
+            time_thresh=None, qc=False, ref_coords=None, n_workers=1):
+        self.name = 'Matched CPL ATB'
+        
+        # get P-3 alt bounds
+        alt_minP3 = np.nanmin(p3_object['alt_gps'].values)
+        alt_maxP3 = np.nanmax(p3_object['alt_gps'].values)
+        alt_boundsP3 = (alt_minP3, alt_maxP3)
+            
+        # qc lidar data
+        lidar_qc = self.qc_lidar(lidar_object, alt_boundsP3)
+        
+        # match the data
+        self.data = self.match_lidar(
+            lidar_qc, p3_object, query_k, dist_thresh, time_thresh,
+            ref_coords, n_workers
+        )
