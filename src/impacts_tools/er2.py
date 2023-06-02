@@ -2535,7 +2535,7 @@ class Cpl(Lidar):
     """
 
     def __init__(self, filepath, start_time=None, end_time=None, max_roll=None,
-                 atb_sigma=None):
+                 atb_sigma=None, l1b_trim_ref=None):
         # read the raw data
         if 'ATB' in filepath:
             self.name = 'CPL ATB'
@@ -2568,13 +2568,68 @@ class Cpl(Lidar):
             if atb_sigma is not None:
                 for var in ['atb_1064', 'atb_532', 'atb_355']:
                     self.data[var] = self.despeckle(self.data[var], atb_sigma)
+        elif ('L2' in filepath) and ('Pro' in filepath):
+            self.name = 'CPL L2 Profiles'
+            self.data = self.readfile_l2pro(filepath, start_time, end_time)
+            """
+                xarray.Dataset of lidar variables and attributes
+
+                Dimensions:
+                    - gate: xarray.DataArray(float) - The lidar gate number  
+                    - time: np.array(np.datetime64[ns]) - The UTC time stamp
+
+                Coordinates:
+                    - gate (gate): xarray.DataArray(float) - The lidar gate number  
+                    - height (range, time): xarray.DataArray(float) - Altitude of each range gate (m)  
+                    - time (time): np.array(np.datetime64[ns]) - The UTC time stamp  
+                    - lat (time): xarray.DataArray(float) - Latitude (degrees)
+                    - lon (time): xarray.DataArray(float) - Longitude (degrees)
+
+                Variables:
+                    - dpol_1064 (gate, time) : xarray.DataArray(float) - Total depolarization ratio profile at 1064 nm for each record
+                    - ext_[1064, 532, 355] (gate, time) : xarray.DataArray(float) - Extinction coefficient (km**-1) profile at [1064, 532, 355] nm for each record
+                    - cod_[1064, 532, 355] (gate, time) : xarray.DataArray(float) - Integrated cloud optical depth at [1064, 532, 355] nm
+
+                Attribute Information:
+                    Experiment, Date, Aircraft, Lidar Name, Data Contact, Instrument PI, Mission PI,
+                    L2 version number, vertical_resolution
+            """
+        elif ('L2' in filepath) and ('Lay' in filepath):
+            self.name = 'CPL L2 Layers'
+            self.data = self.readfile_l2lay(filepath, start_time, end_time)
+            """
+                xarray.Dataset of lidar variables and attributes
+
+                Dimensions:
+                    - layer: xarray.DataArray(float) - The derived layer number  
+                    - time: np.array(np.datetime64[ns]) - The UTC time stamp
+
+                Coordinates:
+                    - layer (layer): xarray.DataArray(float) - The derived layer number  
+                    - time (time): np.array(np.datetime64[ns]) - The UTC time stamp  
+                    - lat (time): xarray.DataArray(float) - Latitude (degrees)
+                    - lon (time): xarray.DataArray(float) - Longitude (degrees)
+
+                Variables:
+                    - layer_top_altitude (layer, time) : xarray.DataArray(float) - Altitude (n) for the top portion of each identified layer
+                    - layer_top_temperature (layer, time) : xarray.DataArray(float) - Temperature (C) for the top portion of each identified layer
+                    - cloud_top_altitude (time) : xarray.DataArray(float) - Cloud top altitude (m) derived from uppermost layer top altitude
+                    - cloud_top_temperature (time) : xarray.DataArray(float) - Cloud top temperature (C) derived from uppermost layer top temperature
+                    - number_layers (time) : xarray.DataArray(float) - Number of layers in 5-s profile
+
+                Attribute Information:
+                    Experiment, Date, Aircraft, Lidar Name, Data Contact, Instrument PI, Mission PI,
+                    L2 version number
+            """
 
         # trim dataset based on specified start/end
         if (start_time is not None) or (end_time is not None):
             self.data = self.trim_time_bounds(start_time, end_time)
+        elif ('CPL L2' in self.name) and (l1b_trim_ref is not None):
+            self.data = self.trim_l2_to_l1b(l1b_trim_ref)
             
         # mask values when aircraft is rolling
-        if max_roll is not None:
+        if (max_roll is not None) and ('er2_roll' in self.data.data_vars):
             self.data = self.mask_roll(max_roll)
 
 
@@ -2779,6 +2834,447 @@ class Cpl(Lidar):
         )
         
         return ds
+    
+    def readfile_l2pro(self, filepath, start_time=None, end_time=None):
+        """
+        Reads the CPL L2 profile data file and unpacks the fields into an xarray.Dataset
+
+        Parameters
+        ----------
+
+        filepath : str
+            Path to the data file
+        start_time : np.datetime64 or None
+            The initial time of interest
+        end_time : np.datetime64 or None
+            The final time of interest
+        
+        Returns
+        -------
+        data : xarray.Dataset
+            The unpacked dataset
+        """  
+        hdf = h5py.File(filepath, 'r')
+
+        # construct the time array
+        y_str = hdf['metadata_parameters']['File_Year'][()].decode('UTF-8').split()[0]
+        jday = hdf['profile']['Profile_Decimal_Julian_Day'][()]
+        date = pd.to_datetime(f'{y_str}', format='%Y').to_pydatetime()
+        dt = np.array(
+            [date + timedelta(
+                seconds=int((86400. * (jday[i, 1] - 1)).round())
+            ) for i in range(jday.shape[0])], dtype='datetime64[ms]'
+        )
+        dt_start = xr.DataArray(
+            data=np.array(
+                [date + timedelta(
+                    seconds=int((86400. * (jday[i, 0] - 1)).round())
+                ) for i in range(jday.shape[0])], dtype='datetime64[ms]'
+            ),
+            dims = ['time'],
+            attrs = dict(
+                description='UTC start time of profile'
+            )
+        )
+        dt_end = xr.DataArray(
+            data=np.array(
+                [date + timedelta(
+                    seconds=int((86400. * (jday[i, 2] - 1)).round())
+                ) for i in range(jday.shape[0])], dtype='datetime64[ms]'
+            ),
+            dims = ['time'],
+            attrs = dict(
+                description='UTC end time of profile'
+            )
+        )
+
+        # aircraft nav information
+        lat = xr.DataArray(
+            data = hdf['geolocation']['CPL_Latitude'][:, 1],
+            dims = ['time'],
+            coords = dict(time=dt),
+            attrs = dict(
+                description='Latitude',
+                units = 'degrees'
+            )
+        )
+        lon = xr.DataArray(
+            data = hdf['geolocation']['CPL_Longitude'][: ,1],
+            dims = ['time'],
+            coords = dict(time=dt),
+            attrs = dict(
+                description='Longitude',
+                units = 'degrees'
+            )
+        )
+
+        # lidar information
+        hght1d = 1000. * hdf['metadata_parameters']['Bin_Altitude_Array'][:] # second dim on product data
+        hght2d = np.tile(np.atleast_2d(hght1d).T, (1, len(dt)))
+        height = xr.DataArray(
+            data = hght2d,
+            dims = ['gate', 'time'],
+            coords = dict(
+                gate = np.arange(len(hght1d)),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Height of each lidar range gate',
+                units='m'
+            )
+        )
+        ext1064 = xr.DataArray(
+            data = np.ma.masked_where(
+                hdf['profile']['Extinction_Coefficient_1064'][:] <= 0.,
+                hdf['profile']['Extinction_Coefficient_1064'][:]
+            ),
+            dims = ['gate', 'time'],
+            coords = dict(
+                gate = np.arange(len(hght1d)),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Extinction coefficient profile at 1064 nm for each record',
+                units='km**-1'
+            )
+        )
+        ext532 = xr.DataArray(
+            data = np.ma.masked_where(
+                hdf['profile']['Extinction_Coefficient_532'][:] <= 0.,
+                hdf['profile']['Extinction_Coefficient_532'][:]
+            ),
+            dims = ['gate', 'time'],
+            coords = dict(
+                gate = np.arange(len(hght1d)),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Extinction coefficient profile at 532 nm for each record',
+                units='km**-1'
+            )
+        )
+        ext355 = xr.DataArray(
+            data = np.ma.masked_where(
+                hdf['profile']['Extinction_Coefficient_355'][:] <= 0.,
+                hdf['profile']['Extinction_Coefficient_355'][:]
+            ),
+            dims = ['gate', 'time'],
+            coords = dict(
+                gate = np.arange(len(hght1d)),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Extinction coefficient profile at 355 nm for each record',
+                units='km**-1'
+            )
+        )
+        dpol_data = np.ma.masked_where(
+            np.isnan(ext1064.values),
+            hdf['profile']['Total_Depolarization_Ratio_1064'][:]
+        )
+        dpol_data = np.ma.masked_where(dpol_data < 0., dpol_data)
+        dpol1064 = xr.DataArray(
+            data = dpol_data,
+            dims = ['gate', 'time'],
+            coords = dict(
+                gate = np.arange(len(hght1d)),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Total depolarization ratio profile at 1064 nm for each record',
+                units='km**-1 sr**-1'
+            )
+        )
+        cod1064 = xr.DataArray(
+            data = np.ma.masked_where(
+                hdf['profile']['Cloud_Optical_Depth_1064'][:] < -1.,
+                hdf['profile']['Cloud_Optical_Depth_1064'][:]
+            ),
+            dims = ['time'],
+            coords = dict(
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Integrated cloud optical depth at 1064 nm for each record',
+                units='#'
+            )
+        )
+        cod532 = xr.DataArray(
+            data = np.ma.masked_where(
+                hdf['profile']['Cloud_Optical_Depth_532'][:] < -1.,
+                hdf['profile']['Cloud_Optical_Depth_532'][:]
+            ),
+            dims = ['time'],
+            coords = dict(
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Cloud optical depth at 532 nm for each record',
+                units='#'
+            )
+        )
+        cod355 = xr.DataArray(
+            data = np.ma.masked_where(
+                hdf['profile']['Cloud_Optical_Depth_355'][:] < -1.,
+                hdf['profile']['Cloud_Optical_Depth_355'][:]
+            ),
+            dims = ['time'],
+            coords = dict(
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Cloud optical depth at 355 nm for each record',
+                units='#'
+            )
+        )
+
+        # metadata for attributes
+        try:
+            L2_Version = hdf['metadata_parameters']['Product_Version_Number'][()].decode('UTF-8')
+        except:
+            L2_Version = ''.join(
+                [chr(hdf['metadata_parameters']['Product_Version_Number'][i]) for i in range(
+                    len(hdf['metadata_parameters']['Product_Version_Number'][()]))]
+            )
+        vert_resolution = 1000. * hdf['metadata_parameters']['Bin_Size'][()]
+        hdf.close()
+
+        # construct the dataset
+        ds = xr.Dataset(
+            data_vars={
+                'dpol_1064': dpol1064,
+                'ext_1064': ext1064,
+                'ext_532': ext532,
+                'ext_355': ext355,
+                'cod_1064': cod1064,
+                'cod_532': cod532,
+                'cod_355': cod355
+            },
+            coords={
+                'gate': np.arange(len(hght1d)),
+                'height': height,
+                'time': dt,
+                'time_start': dt_start,
+                'time_end': dt_end,
+                'lon': lon,
+                'lat': lat,
+            },
+            attrs = {
+                'Experiment': 'IMPACTS',
+                'Date': datetime.strftime(date, '%Y-%m-%d'),
+                'Aircraft': 'ER-2',
+                'Lidar Name': 'CPL',
+                'Data Contact': 'Patrick Selmer',
+                'Instrument PI': 'Matthew McGill',
+                'Mission PI': 'Lynn McMurdie',
+                'L2 Product Version Number': L2_Version,
+                'vertical_resolution': f'{vert_resolution:.2f} m'
+            }
+        )
+
+        return ds
+    
+    def readfile_l2lay(self, filepath, start_time=None, end_time=None):
+        """
+        Reads the CPL L2 layer data file and unpacks the fields into an xarray.Dataset
+
+        Parameters
+        ----------
+
+        filepath : str
+            Path to the data file
+        start_time : np.datetime64 or None
+            The initial time of interest
+        end_time : np.datetime64 or None
+            The final time of interest
+        
+        Returns
+        -------
+        data : xarray.Dataset
+            The unpacked dataset
+        """  
+        hdf = h5py.File(filepath, 'r')
+
+        # construct the time array
+        y_str = hdf['metadata_parameters']['File_Year'][()].decode('UTF-8').split()[0]
+        jday = hdf['layer_descriptor']['Profile_Decimal_Julian_Day'][()]
+        date = pd.to_datetime(f'{y_str}', format='%Y').to_pydatetime()
+        dt = np.array(
+            [date + timedelta(
+                seconds=int((86400. * (jday[i, 1] - 1)).round())
+            ) for i in range(jday.shape[0])], dtype='datetime64[ms]'
+        )
+        
+        # aircraft nav information
+        lat = xr.DataArray(
+            data = hdf['geolocation']['CPL_Latitude'][:, 1],
+            dims = ['time'],
+            coords = dict(time=dt),
+            attrs = dict(
+                description='Latitude',
+                units = 'degrees'
+            )
+        )
+        lon = xr.DataArray(
+            data = hdf['geolocation']['CPL_Longitude'][: ,1],
+            dims = ['time'],
+            coords = dict(time=dt),
+            attrs = dict(
+                description='Longitude',
+                units = 'degrees'
+            )
+        )
+        
+        # lidar information
+        lta = xr.DataArray(
+            data = np.ma.masked_where(
+                hdf['layer_descriptor']['Layer_Top_Altitude'][:].T <= -999.,
+                1000. * hdf['layer_descriptor']['Layer_Top_Altitude'][:].T
+            ),
+            dims = ['layer', 'time'],
+            coords = dict(
+                layer = np.arange(10),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Altitude for the top portion of each identified layer',
+                units='m'
+            )
+        )
+        ltt = xr.DataArray(
+            data = np.ma.masked_where(
+                hdf['layer_descriptor']['Layer_Top_Temperature'][:].T <= -999.,
+                hdf['layer_descriptor']['Layer_Top_Temperature'][:].T
+            ),
+            dims = ['layer', 'time'],
+            coords = dict(
+                layer = np.arange(10),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Temperature for the top portion of each identified layer',
+                units='degrees_Celsius'
+            )
+        )
+        cta = xr.DataArray(
+            data = lta[0, :].values,
+            dims = ['time'],
+            coords = dict(
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Cloud top altitude derived from uppermost layer top altitude',
+                units='m'
+            )
+        )
+        ctt = xr.DataArray(
+            data = ltt[0, :].values,
+            dims = ['time'],
+            coords = dict(
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Cloud top temperature derived from uppermost layer top temperature',
+                units='degrees_Celsius'
+            )
+        )
+        nlay = xr.DataArray(
+            data = hdf['layer_descriptor']['Number_Layers'][:],
+            dims = ['time'],
+            coords = dict(
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Number of layers in 5-s profile',
+                units='#'
+            )
+        )
+        
+        # metadata for attributes
+        try:
+            L2_Version = hdf['metadata_parameters']['Product_Version_Number'][()].decode('UTF-8')
+        except:
+            L2_Version = ''.join(
+                [chr(hdf['metadata_parameters']['Product_Version_Number'][i]) for i in range(
+                    len(hdf['metadata_parameters']['Product_Version_Number'][()]))]
+            )
+        hdf.close()
+        
+        # construct the dataset
+        ds = xr.Dataset(
+            data_vars={
+                'layer_top_altitude': lta,
+                'layer_top_temperature': ltt,
+                'cloud_top_altitude': cta,
+                'cloud_top_temperature': ctt,
+                'number_layers': nlay
+            },
+            coords={
+                'layer': np.arange(10),
+                'time': dt,
+                'lon': lon,
+                'lat': lat,
+            },
+            attrs = {
+                'Experiment': 'IMPACTS',
+                'Date': datetime.strftime(date, '%Y-%m-%d'),
+                'Aircraft': 'ER-2',
+                'Lidar Name': 'CPL',
+                'Data Contact': 'Patrick Selmer',
+                'Instrument PI': 'Matthew McGill',
+                'Mission PI': 'Lynn McMurdie',
+                'L2 Product Version Number': L2_Version
+            }
+        )
+        
+        return ds
+    
+    def trim_l2_to_l1b(self, l1b_object):
+        """
+        Put the dataset into the same time bounds as the CPL L1B 1-Hz ATB profile data.
+        
+        Parameters
+        ----------
+        l1b_object: impacts_tools.er2.CPL()
+            CPL L1B 1-Hz ATB object to optionally constrain times and navigation data
+
+        Returns
+        -------
+        data : xarray.Dataset
+            The reindexed dataset with er2_altitude, er2_heading, er2_roll, distance vars
+        """
+        
+        # first remove L1B periods with duplicate times
+        l1b_data = l1b_object.data.drop_duplicates('time').drop_vars(
+            ['lat', 'lon']
+        )
+        
+        # trim the L2 data
+        l2_sub = self.data.sel(
+            time=slice(l1b_data.time[0], l1b_data.time[-1])
+        )
+        
+        # extract L1B data valid at the L2 profile midpoints
+        l1b_sub = l1b_data[['er2_altitude', 'er2_heading', 'er2_roll']].reindex(
+            time=l2_sub.time, method='nearest', tolerance='5S'
+        )
+        
+        return xr.merge(
+            [l2_sub, l1b_sub], compat='override', combine_attrs='override'
+        )
         
 
 class VAD(object):

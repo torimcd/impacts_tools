@@ -181,15 +181,24 @@ class Match(ABC):
             Minimum and maximum P-3 altitude (m) for flight segment.
         """
         mask = np.ones(lidar_object[list(lidar_object.data_vars)[0]].shape, dtype=bool)
+        print(self.name)
         
         # mask pixels > 50 m below (above) min (max) P-3 altitude
-        if self.name == 'Matched CPL ATB':
+        if self.name == 'Matched CPL ATB': # L1B backscatter data
             mask[
                 (lidar_object['height'].values >= alt_bounds_p3[0] - 50.) &
                 (lidar_object['height'].values <= alt_bounds_p3[1] + 50.) &
                 (lidar_object['atb_1064'].values >= 5.e-4) &
-                (lidar_object['atb_1064'].values >= 5.e-4) &
-                (lidar_object['atb_1064'].values >= 5.e-4) &
+                (lidar_object['atb_532'].values >= 5.e-4) &
+                (lidar_object['atb_355'].values >= 5.e-4) &
+                (lidar_object['height'].values >= 500.)] = False
+        elif self.name == 'Matched CPL Pofiles': # L2 profile data
+            mask[
+                (lidar_object['height'].values >= alt_bounds_p3[0] - 50.) &
+                (lidar_object['height'].values <= alt_bounds_p3[1] + 50.) &
+                (lidar_object['ext_1064'].values >= 1.e-3) &
+                (lidar_object['ext_532'].values >= 1.e-3) &
+                (lidar_object['ext_355'].values >= 1.e-3) &
                 (lidar_object['height'].values >= 500.)] = False
         
         # build 1D dataset with select lidar vars
@@ -264,6 +273,52 @@ class Match(ABC):
                 attrs = lidar_object['atb_355'].attrs
             )
             data_vars = {'atb_1064': atb1064, 'atb_532': atb532, 'atb_355': atb355}
+        elif self.name == 'Matched CPL Pofiles':
+            print('here')
+            dpol1064 = xr.DataArray(
+                data =  (
+                    xr.DataArray(np.ones(lidar_object.dims['gate']), dims=('gate')) *
+                   lidar_object['dpol_1064']).values.flatten(),
+                dims = 'gate_idx',
+                coords = dict(
+                    time = time_flat, height = hght, distance = dist,
+                    lat = lat, lon = lon),
+                attrs = lidar_object['dpol_1064'].attrs
+            )
+            ext1064 = xr.DataArray(
+                data =  (
+                    xr.DataArray(np.ones(lidar_object.dims['gate']), dims=('gate')) *
+                   lidar_object['ext_1064']).values.flatten(),
+                dims = 'gate_idx',
+                coords = dict(
+                    time = time_flat, height = hght, distance = dist,
+                    lat = lat, lon = lon),
+                attrs = lidar_object['ext_1064'].attrs
+            )
+            ext532 = xr.DataArray(
+                data =  (
+                    xr.DataArray(np.ones(lidar_object.dims['gate']), dims=('gate')) *
+                    lidar_object['ext_532']).values.flatten(),
+                dims = 'gate_idx',
+                coords = dict(
+                    time = time_flat, height = hght, distance = dist,
+                    lat = lat, lon = lon),
+                attrs =lidar_object['ext_532'].attrs
+            )
+            ext355 = xr.DataArray(
+                data =  (
+                    xr.DataArray(np.ones(lidar_object.dims['gate']), dims=('gate')) *
+                    lidar_object['ext_355']).values.flatten(),
+                dims = 'gate_idx',
+                coords = dict(
+                    time = time_flat, height = hght, distance = dist,
+                    lat = lat, lon = lon),
+                attrs = lidar_object['ext_355'].attrs
+            )
+            data_vars = {
+                'dpol_1064': dpol1064, 'ext_1064': ext1064, 'ext_532': ext532,
+                'ext_355': ext355
+            }
         ds = xr.Dataset(
             data_vars = data_vars,
             coords = {
@@ -330,6 +385,29 @@ class Match(ABC):
                     ),
                     units = 'km**-1 sr**-1'
                 )
+        elif self.name == 'Matched CPL Pofiles':
+            match_dict = {}
+            match_dict['dpol_1064'] = dict(
+                data = np.ma.masked_where(
+                        prind1d == 0, lidar_qc['dpol_1064'].values[prind1d]
+                    ),
+                    description = (
+                        'Mean depolarization ratio profile at 1064 nm among '
+                        'matched lidar gates'
+                    ),
+                    units = '#'
+            )
+            for wavelength in [1064, 532, 355]:
+                match_dict[f'ext_{wavelength}'] = dict(
+                    data = np.ma.masked_where(
+                        prind1d == 0, lidar_qc[f'ext_{wavelength}'].values[prind1d]
+                    ),
+                    description = (
+                        'Mean extinction coefficient profile at '
+                        f'{wavelength} nm among matched lidar gates'
+                    ),
+                    units = 'km**-1'
+                )
             
         # perform the matching routine
         if query_k == 1: # nearest neighbor
@@ -339,8 +417,8 @@ class Match(ABC):
                 np.exp(-1 * prdistance**2. / dist_thresh**2.)
             ) # distance weights
             
-            # L1B ATB
-            if self.name == 'Matched CPL ATB':
+            # use Barnes weighting based on gate distance to P-3
+            if self.name == 'Matched CPL ATB': # L1B ATB data
                 for wavelength in [1064, 532, 355]:
                     W_d_k2 = np.ma.masked_where(
                         np.ma.getmask(match_dict[f'atb_{wavelength}']['data']),
@@ -368,6 +446,17 @@ class Match(ABC):
                     dbz_matched = np.ma.masked_where(
                         dbz_stdev > 5., dbz_matched).filled(np.nan) # mask suspected skin paint artifact
                     '''
+            elif self.name == 'Matched CPL Pofiles': # L2 profile data
+                for var in ['dpol_1064', 'ext_1064', 'ext_532', 'ext_355']:
+                    W_d_k2 = np.ma.masked_where(
+                        np.ma.getmask(match_dict[var]['data']),
+                        W_d_k.copy()
+                    ) # mask weights where data is masked
+                    w1 = np.ma.sum(
+                        W_d_k2 * match_dict[var]['data'], axis=1
+                    ) # weighted sum of values per N-s period
+                    w2 = np.ma.sum(W_d_k2, axis=1) # sum of weights per N-s period
+                    match_dict[var]['data'] = w1 / w2 # flatten matched, weighted data
             # time
             time_2d = np.tile(
                 np.atleast_2d(p3_object['time'].values).T, (1, query_k)
@@ -402,12 +491,13 @@ class Match(ABC):
             alt_lidar_matched = w1 / w2
             
         # along track distance
-        nomdist = np.zeros(len(p3_object['time']))
-        for i in range(len(p3_object['time'])):
-            if ~np.isnan(time_lidar_matched[i]):
-                nomdist[i] = lidar_qc['distance'].values[
-                    np.argmin(np.abs(lidar_qc['time'].values - time_lidar_matched[i]))
-                ]
+        if 'distance' in lidar_qc.data_vars:
+            nomdist = np.zeros(len(p3_object['time']))
+            for i in range(len(p3_object['time'])):
+                if ~np.isnan(time_lidar_matched[i]):
+                    nomdist[i] = lidar_qc['distance'].values[
+                        np.argmin(np.abs(lidar_qc['time'].values - time_lidar_matched[i]))
+                    ]
         
         # mask data
         mask_altdiff = np.abs(
@@ -419,6 +509,14 @@ class Match(ABC):
                 np.isnan(match_dict['atb_1064']['data']) +
                 np.isnan(match_dict['atb_532']['data']) +
                 np.isnan(match_dict['atb_355']['data']) +
+                mask_tdiff.data + mask_altdiff
+            )
+        elif self.name == 'Matched CPL Pofiles':
+            mask_final = (
+                np.isnan(match_dict['dpol_1064']['data']) +
+                np.isnan(match_dict['ext_1064']['data']) +
+                np.isnan(match_dict['ext_532']['data']) +
+                np.isnan(match_dict['ext_355']['data']) +
                 mask_tdiff.data + mask_altdiff
             )
             
@@ -468,16 +566,28 @@ class Match(ABC):
                 units = 's'
             )
         )
-        for wavelength in [1064, 532, 355]:
-            data_vars[f'atb_{wavelength}'] = xr.DataArray(
-                data = np.ma.masked_where(mask_final, match_dict[f'atb_{wavelength}']['data']),
-                dims = 'time',
-                coords = dict(time = time, time_lidar = time_lidar),
-                attrs = dict(
-                    description = match_dict[f'atb_{wavelength}']['description'],
-                    units = match_dict[f'atb_{wavelength}']['units']
+        if self.name == 'Matched CPL ATB':
+            for wavelength in [1064, 532, 355]:
+                data_vars[f'atb_{wavelength}'] = xr.DataArray(
+                    data = np.ma.masked_where(mask_final, match_dict[f'atb_{wavelength}']['data']),
+                    dims = 'time',
+                    coords = dict(time = time, time_lidar = time_lidar),
+                    attrs = dict(
+                        description = match_dict[f'atb_{wavelength}']['description'],
+                        units = match_dict[f'atb_{wavelength}']['units']
+                    )
                 )
-            )
+        elif self.name == 'Matched CPL Pofiles':
+            for var in ['dpol_1064', 'ext_1064', 'ext_532', 'ext_355']:
+                data_vars[var] = xr.DataArray(
+                    data = np.ma.masked_where(mask_final, match_dict[var]['data']),
+                    dims = 'time',
+                    coords = dict(time = time, time_lidar = time_lidar),
+                    attrs = dict(
+                        description = match_dict[var]['description'],
+                        units = match_dict[var]['units']
+                    )
+                )
         
         # create dataset
         ds = xr.Dataset(
@@ -994,7 +1104,10 @@ class Cpl(Match):
     def __init__(
             self, lidar_object, p3_object, query_k=1, dist_thresh=4000.,
             time_thresh=None, qc=False, ref_coords=None, n_workers=1):
-        self.name = 'Matched CPL ATB'
+        if 'atb_1064' in lidar_object.data_vars: # L1B ATB data
+            self.name = 'Matched CPL ATB'
+        elif 'dpol_1064' in lidar_object.data_vars: # L2 profile data
+            self.name = 'Matched CPL Profiles'
         
         # get P-3 alt bounds
         alt_minP3 = np.nanmin(p3_object['alt_gps'].values)
