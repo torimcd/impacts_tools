@@ -361,6 +361,94 @@ class Lidar(ABC):
 
             return ds_sub.assign_coords(distance=dist)
         
+    def get_cloudtop_properties(self, cpl_layer_object):
+        """
+        Get the CPL properties at cloud top as defined by the L2 layer product.
+        """
+        # interpolate cloud top altitude and temperature to dataset (e.g., w/ L1B)
+        cta = cpl_layer_object.data.cloud_top_altitude.interp_like(
+            self.data.time, method='nearest', kwargs={'fill_value': 'extrapolate'}
+        )
+        ctt = cpl_layer_object.data.cloud_top_temperature.interp_like(
+            self.data.time, method='nearest', kwargs={'fill_value': 'extrapolate'}
+        )
+        
+        # compute absolute distance from cloud top for each gate
+        gate_ind = np.fabs(self.data.height - cta).argmin(dim='gate')
+        
+        # build bool matrix where lidar gates above cloud top are ignored
+        mask = np.ones(self.data.height.shape, dtype=bool) # true = mask data
+        for beam in range(self.data.height.shape[1]):
+            if ~np.isnan(gate_ind[beam]):
+                mask[int(gate_ind[beam]) + 1:, beam] = False
+                
+        # find cloud top values of 2D products
+        data_vars = {}
+        data_vars['altitude_top'] = xr.DataArray(
+            data = cta.values,
+            dims = ['time'],
+            coords = dict(
+                time = self.data.time,
+                lat = self.data.lat,
+                lon = self.data.lon),
+            attrs = dict(
+                description='Cloud top altitude derived from uppermost layer top altitude',
+                units='m'
+            )
+        )
+        data_vars['temperature_top'] = xr.DataArray(
+            data = ctt.values,
+            dims = ['time'],
+            coords = dict(
+                time = self.data.time,
+                lat = self.data.lat,
+                lon = self.data.lon),
+            attrs = dict(
+                description='Cloud top temperature derived from uppermost layer top temperature',
+                units='degrees_Celsius'
+            )
+        )
+        for var in list(self.data.data_vars):
+            if self.data[var].ndim == 2:
+                if 'atb' in var:
+                    description = f'Cloud top attenuated backscatter at {var.split("_")[-1]} nm'
+                    units = 'km**-1 sr**-1'
+                elif var == 'dpol_1064':
+                    description = 'Cloud top depolarization ratio at 1064 nm'
+                    units = '#'
+                elif 'ext' in var:
+                    description = f'Cloud top extinction at {var.split("_")[-1]} nm'
+                    units = 'km**-1'
+                data_2d  = np.ma.masked_where(mask, self.data[var].values)
+                data_2d = np.ma.masked_invalid(data_2d)
+
+                data_top = np.nan * np.empty(self.data.height.shape[1])
+                for beam in range(self.data.height.shape[1]):
+                    if len(data_2d[:, beam].compressed()) > 0:
+                        data_top[beam] = np.mean(data_2d[
+                            :, beam].compressed()[:3]) # get mean of first 3 good obs below cloud top
+                data_vars[f'{var}_top'] = xr.DataArray(
+                    data = np.ma.masked_invalid(data_top),
+                    dims = 'time',
+                    coords = dict(time = self.data.time),
+                    attrs = dict(
+                        description = description,
+                        units = units
+                    )
+                )
+                
+        # add cloud top properties to L1B or L2 profile dataset
+        ds = xr.Dataset(
+            data_vars = data_vars,
+            coords = {'time': self.data.time}
+        )
+
+        ds_merged = xr.merge(
+            [self.data, ds], combine_attrs='drop_conflicts'
+        )
+        
+        return ds_merged
+        
     def get_flight_legs(self):
         """
         Get the start and end time stamps for each leg of this flight.
@@ -2535,7 +2623,7 @@ class Cpl(Lidar):
     """
 
     def __init__(self, filepath, start_time=None, end_time=None, max_roll=None,
-                 atb_sigma=None, l1b_trim_ref=None):
+                 atb_sigma=None, l1b_trim_ref=None, l2_cloudtop_ref=None):
         # read the raw data
         if 'ATB' in filepath:
             self.name = 'CPL ATB'
@@ -2627,6 +2715,11 @@ class Cpl(Lidar):
             self.data = self.trim_time_bounds(start_time, end_time)
         elif ('CPL L2' in self.name) and (l1b_trim_ref is not None):
             self.data = self.trim_l2_to_l1b(l1b_trim_ref)
+            
+        # compute cloudtop properties for L1B and L2 profile data (optional)
+        if (l2_cloudtop_ref is not None) and (
+                    (self.name == 'CPL ATB') or (self.name == 'CPL L2 Profiles')):
+                self.data = self.get_cloudtop_properties(l2_cloudtop_ref)
             
         # mask values when aircraft is rolling
         if (max_roll is not None) and ('er2_roll' in self.data.data_vars):
@@ -2746,7 +2839,7 @@ class Cpl(Lidar):
         )
 
         atb1064 = xr.DataArray(
-            data = np.ma.masked_where(hdf['ATB_1064'][:].T == 0., hdf['ATB_1064'][:].T),
+            data = np.ma.masked_where(hdf['ATB_1064'][:].T <= 0., hdf['ATB_1064'][:].T),
             dims = ['gate', 'time'],
             coords = dict(
                 gate = np.arange(len(hght1d)),
@@ -2760,7 +2853,7 @@ class Cpl(Lidar):
         )
 
         atb532 = xr.DataArray(
-            data = np.ma.masked_where(hdf['ATB_532'][:].T == 0., hdf['ATB_532'][:].T),
+            data = np.ma.masked_where(hdf['ATB_532'][:].T <= 0., hdf['ATB_532'][:].T),
             dims = ['gate', 'time'],
             coords = dict(
                 gate = np.arange(len(hght1d)),
@@ -2774,7 +2867,7 @@ class Cpl(Lidar):
         )
 
         atb355 = xr.DataArray(
-            data = np.ma.masked_where(hdf['ATB_355'][:].T == 0., hdf['ATB_355'][:].T),
+            data = np.ma.masked_where(hdf['ATB_355'][:].T <= 0., hdf['ATB_355'][:].T),
             dims = ['gate', 'time'],
             coords = dict(
                 gate = np.arange(len(hght1d)),
