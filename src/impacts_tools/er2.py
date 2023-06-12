@@ -365,11 +365,16 @@ class Lidar(ABC):
         """
         Get the CPL properties at cloud top as defined by the L2 layer product.
         """
+        # drop times with no/masked (e.g., roll > 10) layers
+        cpl_layer_data = cpl_layer_object.data.where(
+            ~np.isnan(cpl_layer_object.data.cloud_top_altitude), drop=True
+        )
+        
         # interpolate cloud top altitude and temperature to dataset (e.g., w/ L1B)
-        cta = cpl_layer_object.data.cloud_top_altitude.interp_like(
+        cta = cpl_layer_data.cloud_top_altitude.interp_like(
             self.data.time, method='nearest', kwargs={'fill_value': 'extrapolate'}
         )
-        ctt = cpl_layer_object.data.cloud_top_temperature.interp_like(
+        ctt = cpl_layer_data.cloud_top_temperature.interp_like(
             self.data.time, method='nearest', kwargs={'fill_value': 'extrapolate'}
         )
         
@@ -2926,7 +2931,7 @@ class Cpl(Lidar):
             }
         )
         
-        return ds
+        return ds.drop_duplicates('time')
     
     def readfile_l2pro(self, filepath, start_time=None, end_time=None):
         """
@@ -2958,11 +2963,12 @@ class Cpl(Lidar):
                 seconds=int((86400. * (jday[i, 1] - 1)).round())
             ) for i in range(jday.shape[0])], dtype='datetime64[ms]'
         )
+        dt, tind = np.unique(dt, return_index=True) # ignore duplicate times
         dt_start = xr.DataArray(
             data=np.array(
                 [date + timedelta(
                     seconds=int((86400. * (jday[i, 0] - 1)).round())
-                ) for i in range(jday.shape[0])], dtype='datetime64[ms]'
+                ) for i in tind], dtype='datetime64[ms]'
             ),
             dims = ['time'],
             attrs = dict(
@@ -2973,7 +2979,7 @@ class Cpl(Lidar):
             data=np.array(
                 [date + timedelta(
                     seconds=int((86400. * (jday[i, 2] - 1)).round())
-                ) for i in range(jday.shape[0])], dtype='datetime64[ms]'
+                ) for i in tind], dtype='datetime64[ms]'
             ),
             dims = ['time'],
             attrs = dict(
@@ -2983,7 +2989,7 @@ class Cpl(Lidar):
 
         # aircraft nav information
         lat = xr.DataArray(
-            data = hdf['geolocation']['CPL_Latitude'][:, 1],
+            data = hdf['geolocation']['CPL_Latitude'][tind, 1],
             dims = ['time'],
             coords = dict(time=dt),
             attrs = dict(
@@ -2992,7 +2998,7 @@ class Cpl(Lidar):
             )
         )
         lon = xr.DataArray(
-            data = hdf['geolocation']['CPL_Longitude'][: ,1],
+            data = hdf['geolocation']['CPL_Longitude'][tind ,1],
             dims = ['time'],
             coords = dict(time=dt),
             attrs = dict(
@@ -3019,8 +3025,8 @@ class Cpl(Lidar):
         )
         ext1064 = xr.DataArray(
             data = np.ma.masked_where(
-                hdf['profile']['Extinction_Coefficient_1064'][:] <= 0.,
-                hdf['profile']['Extinction_Coefficient_1064'][:]
+                hdf['profile']['Extinction_Coefficient_1064'][:, tind] <= 0.,
+                hdf['profile']['Extinction_Coefficient_1064'][:, tind]
             ),
             dims = ['gate', 'time'],
             coords = dict(
@@ -3035,8 +3041,8 @@ class Cpl(Lidar):
         )
         ext532 = xr.DataArray(
             data = np.ma.masked_where(
-                hdf['profile']['Extinction_Coefficient_532'][:] <= 0.,
-                hdf['profile']['Extinction_Coefficient_532'][:]
+                hdf['profile']['Extinction_Coefficient_532'][:, tind] <= 0.,
+                hdf['profile']['Extinction_Coefficient_532'][:, tind]
             ),
             dims = ['gate', 'time'],
             coords = dict(
@@ -3051,8 +3057,8 @@ class Cpl(Lidar):
         )
         ext355 = xr.DataArray(
             data = np.ma.masked_where(
-                hdf['profile']['Extinction_Coefficient_355'][:] <= 0.,
-                hdf['profile']['Extinction_Coefficient_355'][:]
+                hdf['profile']['Extinction_Coefficient_355'][:, tind] <= 0.,
+                hdf['profile']['Extinction_Coefficient_355'][:, tind]
             ),
             dims = ['gate', 'time'],
             coords = dict(
@@ -3067,7 +3073,7 @@ class Cpl(Lidar):
         )
         dpol_data = np.ma.masked_where(
             np.isnan(ext1064.values),
-            hdf['profile']['Total_Depolarization_Ratio_1064'][:]
+            hdf['profile']['Total_Depolarization_Ratio_1064'][:, tind]
         )
         dpol_data = np.ma.masked_where(dpol_data < 0., dpol_data)
         dpol1064 = xr.DataArray(
@@ -3085,8 +3091,8 @@ class Cpl(Lidar):
         )
         cod1064 = xr.DataArray(
             data = np.ma.masked_where(
-                hdf['profile']['Cloud_Optical_Depth_1064'][:] < -1.,
-                hdf['profile']['Cloud_Optical_Depth_1064'][:]
+                hdf['profile']['Cloud_Optical_Depth_1064'][tind] < -1.,
+                hdf['profile']['Cloud_Optical_Depth_1064'][tind]
             ),
             dims = ['time'],
             coords = dict(
@@ -3100,8 +3106,8 @@ class Cpl(Lidar):
         )
         cod532 = xr.DataArray(
             data = np.ma.masked_where(
-                hdf['profile']['Cloud_Optical_Depth_532'][:] < -1.,
-                hdf['profile']['Cloud_Optical_Depth_532'][:]
+                hdf['profile']['Cloud_Optical_Depth_532'][tind] < -1.,
+                hdf['profile']['Cloud_Optical_Depth_532'][tind]
             ),
             dims = ['time'],
             coords = dict(
@@ -3115,8 +3121,8 @@ class Cpl(Lidar):
         )
         cod355 = xr.DataArray(
             data = np.ma.masked_where(
-                hdf['profile']['Cloud_Optical_Depth_355'][:] < -1.,
-                hdf['profile']['Cloud_Optical_Depth_355'][:]
+                hdf['profile']['Cloud_Optical_Depth_355'][tind] < -1.,
+                hdf['profile']['Cloud_Optical_Depth_355'][tind]
             ),
             dims = ['time'],
             coords = dict(
@@ -3205,10 +3211,11 @@ class Cpl(Lidar):
                 seconds=int((86400. * (jday[i, 1] - 1)).round())
             ) for i in range(jday.shape[0])], dtype='datetime64[ms]'
         )
+        dt, tind = np.unique(dt, return_index=True) # ignore duplicate times
         
         # aircraft nav information
         lat = xr.DataArray(
-            data = hdf['geolocation']['CPL_Latitude'][:, 1],
+            data = hdf['geolocation']['CPL_Latitude'][tind, 1],
             dims = ['time'],
             coords = dict(time=dt),
             attrs = dict(
@@ -3217,7 +3224,7 @@ class Cpl(Lidar):
             )
         )
         lon = xr.DataArray(
-            data = hdf['geolocation']['CPL_Longitude'][: ,1],
+            data = hdf['geolocation']['CPL_Longitude'][tind ,1],
             dims = ['time'],
             coords = dict(time=dt),
             attrs = dict(
@@ -3229,8 +3236,8 @@ class Cpl(Lidar):
         # lidar information
         lta = xr.DataArray(
             data = np.ma.masked_where(
-                hdf['layer_descriptor']['Layer_Top_Altitude'][:].T <= -999.,
-                1000. * hdf['layer_descriptor']['Layer_Top_Altitude'][:].T
+                hdf['layer_descriptor']['Layer_Top_Altitude'][tind, :].T <= -999.,
+                1000. * hdf['layer_descriptor']['Layer_Top_Altitude'][tind, :].T
             ),
             dims = ['layer', 'time'],
             coords = dict(
@@ -3245,8 +3252,8 @@ class Cpl(Lidar):
         )
         ltt = xr.DataArray(
             data = np.ma.masked_where(
-                hdf['layer_descriptor']['Layer_Top_Temperature'][:].T <= -999.,
-                hdf['layer_descriptor']['Layer_Top_Temperature'][:].T
+                hdf['layer_descriptor']['Layer_Top_Temperature'][tind, :].T <= -999.,
+                hdf['layer_descriptor']['Layer_Top_Temperature'][tind, :].T
             ),
             dims = ['layer', 'time'],
             coords = dict(
@@ -3260,7 +3267,7 @@ class Cpl(Lidar):
             )
         )
         cta = xr.DataArray(
-            data = lta[0, :].values,
+            data = lta[0, tind].values,
             dims = ['time'],
             coords = dict(
                 time = dt,
@@ -3272,7 +3279,7 @@ class Cpl(Lidar):
             )
         )
         ctt = xr.DataArray(
-            data = ltt[0, :].values,
+            data = ltt[0, tind].values,
             dims = ['time'],
             coords = dict(
                 time = dt,
@@ -3284,7 +3291,7 @@ class Cpl(Lidar):
             )
         )
         nlay = xr.DataArray(
-            data = hdf['layer_descriptor']['Number_Layers'][:],
+            data = hdf['layer_descriptor']['Number_Layers'][tind],
             dims = ['time'],
             coords = dict(
                 time = dt,
@@ -3333,7 +3340,7 @@ class Cpl(Lidar):
             }
         )
         
-        return ds
+        return ds.where(~np.isnan(ds.cloud_top_altitude), drop=True) # drop times with no layers
     
     def trim_l2_to_l1b(self, l1b_object):
         """
