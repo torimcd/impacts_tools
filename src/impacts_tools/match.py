@@ -52,6 +52,7 @@ class Match(ABC):
                 (ds_qc['height'].values >= alt_bounds_p3[0] - 250.) &
                 (ds_qc['height'].values <= alt_bounds_p3[1] + 250.) &
                 (~np.isnan(ds_qc['dbz'].values)) &
+                (~np.isnan(ds_qc['vel'].values)) &
                 (ds_qc['height'].values >= 500.)] = False
             mask = xr.DataArray(
                 data = mask,
@@ -86,6 +87,8 @@ class Match(ABC):
                 (ds_qc['height'].values <= alt_bounds_p3[1] + 250.) &
                 (~np.isnan(ds_qc['dbz_ku'].values)) &
                 (~np.isnan(ds_qc['dbz_ka'].values)) &
+                (~np.isnan(ds_qc['vel_ku'].values)) &
+                (~np.isnan(ds_qc['vel_ka'].values)) &
                 (ds_qc['height'].values >= 500.)] = False
             mask = xr.DataArray(
                 data = mask,
@@ -176,7 +179,17 @@ class Match(ABC):
                     lat = lat, lon = lon),
                 attrs = radar_dataset['dbz'].attrs
             )
-            data_vars = {'dbz': dbz}
+            vel = xr.DataArray(
+                data =  (
+                    xr.DataArray(np.ones(radar_dataset.dims['range']), dims=('range')) *
+                    radar_dataset['vel']).values.flatten(),
+                dims = 'gate_idx',
+                coords = dict(
+                    time = time_flat, height = hght, distance = dist,
+                    lat = lat, lon = lon),
+                attrs = radar_dataset['vel'].attrs
+            )
+            data_vars = {'dbz': dbz, 'vel': vel}
         elif self.name == 'Matched HIWRAP':
             dbz_ka = xr.DataArray(
                 data =  radar_dataset['dbz_ka'].values.flatten(),
@@ -194,7 +207,25 @@ class Match(ABC):
                     lat = lat, lon = lon),
                 attrs = radar_dataset['dbz_ku'].attrs
             )
-            data_vars = {'dbz_ka': dbz_ka, 'dbz_ku': dbz_ku}
+            vel_ka = xr.DataArray(
+                data =  radar_dataset['vel_ka'].values.flatten(),
+                dims = 'gate_idx',
+                coords = dict(
+                    time = time_flat, height = hght, distance = dist,
+                    lat = lat, lon = lon),
+                attrs = radar_dataset['vel_ka'].attrs
+            )
+            vel_ku = xr.DataArray(
+                data =  radar_dataset['vel_ku'].values.flatten(),
+                dims = 'gate_idx',
+                coords = dict(
+                    time = time_flat, height = hght, distance = dist,
+                    lat = lat, lon = lon),
+                attrs = radar_dataset['vel_ku'].attrs
+            )
+            data_vars = {
+                'dbz_ka': dbz_ka, 'dbz_ku': dbz_ku, 'vel_ka': vel_ka, 'vel_ku': vel_ku
+            }
         ds = xr.Dataset(
             data_vars = data_vars,
             coords = {
@@ -728,7 +759,10 @@ class Match(ABC):
             dbz_matched = np.ma.masked_where(
                 prind1d == 0, radar_qc['dbz'].values[prind1d]
             )
-            key_dbz = 'dbz'
+            vel_matched = np.ma.masked_where(
+                prind1d == 0, radar_qc['vel'].values[prind1d]
+            )
+            key_dbz, key_vel = ('dbz', 'vel')
         elif self.name == 'Matched HIWRAP':
             dbz_matched = np.ma.masked_where(
                 prind1d == 0, radar_qc['dbz_ka'].values[prind1d]
@@ -736,10 +770,17 @@ class Match(ABC):
             dbz2_matched = np.ma.masked_where(
                 prind1d == 0, radar_qc['dbz_ku'].values[prind1d]
             )
-            key_dbz = 'dbz_ka'
+            vel_matched = np.ma.masked_where(
+                prind1d == 0, radar_qc['vel_ka'].values[prind1d]
+            )
+            vel2_matched = np.ma.masked_where(
+                prind1d == 0, radar_qc['vel_ku'].values[prind1d]
+            )
+            key_dbz, key_vel = ('dbz_ka', 'vel_ka')
         
         # Perform the matching routine
         if query_k == 1: # nearest neighbor
+            print('Nearest neighbor not supported at this time')
             return
         else: # more than closest gate considered, use Barnes-weighted mean
             # dbz
@@ -770,8 +811,19 @@ class Match(ABC):
             dbz_matched = np.ma.masked_where(
                 dbz_stdev > 5., dbz_matched).filled(np.nan) # mask suspected skin paint artifact
             
-            # dbz2 (HIWRAP Ku)
+            # vel
+            W_d_k2 = np.ma.masked_where(
+                np.ma.getmask(vel_matched), W_d_k.copy()
+            ) # mask weights where vel is masked
+            w1 = np.ma.sum(
+                W_d_k2 * 10.**(vel_matched / 10.), axis=1
+            ) # weighted sum of linear Z per N-s period
+            w2 = np.ma.sum(W_d_k2, axis=1) # sum of weights per N-s period
+            vel_matched = w1 / w2 # flatten matched vel
+            
+            # dbz2 and vel2 (HIWRAP Ku)
             if self.name == 'Matched HIWRAP':
+                # dbz2
                 W_d_k2 = np.ma.masked_where(
                     np.ma.getmask(dbz2_matched), W_d_k.copy()
                 ) # mask weights where dbz is masked
@@ -795,6 +847,16 @@ class Match(ABC):
                 dbz2_stdev = np.ma.masked_invalid(dbz2_stdev)
                 dbz2_matched = np.ma.masked_where(
                     dbz2_stdev > 5., dbz2_matched).filled(np.nan) # mask suspected skin paint artifact
+                
+                # vel2
+                W_d_k2 = np.ma.masked_where(
+                    np.ma.getmask(vel2_matched), W_d_k.copy()
+                ) # mask weights where vel is masked
+                w1 = np.ma.sum(
+                    W_d_k2 * 10.**(vel2_matched / 10.), axis=1
+                ) # weighted sum of linear Z per N-s period
+                w2 = np.ma.sum(W_d_k2, axis=1) # sum of weights per N-s period
+                vel2_matched = w1 / w2 # flatten matched vel
                 
             # time
             time_2d = np.tile(
@@ -902,6 +964,15 @@ class Match(ABC):
                 units = 's'
             )
         )
+        vel = xr.DataArray(
+            data = np.ma.masked_where(mask_final, vel_matched),
+            dims = 'time',
+            coords = dict(time = time, time_radar = time_radar),
+            attrs = dict(
+                description = 'Mean Doppler velocity among matched radar gates',
+                units = 'm s**-1'
+            )
+        )
         if self.name == 'Matched HIWRAP':
             dbz2 = xr.DataArray(
                 data = np.ma.masked_where(mask_final, dbz2_matched),
@@ -912,17 +983,29 @@ class Match(ABC):
                     units = 's'
                 )
             )
+            vel2 = xr.DataArray(
+                data = np.ma.masked_where(mask_final, vel2_matched),
+                dims = 'time',
+                coords = dict(time = time, time_radar = time_radar),
+                attrs = dict(
+                    description = 'Mean Doppler velocity among matched radar gates',
+                    units = 'm s**-1'
+                )
+            )
             data_vars = {
                 'dist_diff': ddiff,
                 'time_diff': tdiff,
                 'dbz_ka': dbz,
-                'dbz_ku': dbz2
+                'dbz_ku': dbz2,
+                'vel_ka': vel,
+                'vel_ku': vel2
             }
         else:
             data_vars = {
                 'dist_diff': ddiff,
                 'time_diff': tdiff,
                 'dbz': dbz,
+                'vel': vel
             }
             
         # create dataset
