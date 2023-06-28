@@ -8,6 +8,10 @@ import pandas as pd
 from datetime import datetime, timedelta
 from abc import ABC, abstractmethod
 from scipy.optimize import least_squares
+try: # try importing the pytmatrix package
+    from impacts_tools.forward import *
+except ImportError:
+    print('Note: Install the pytmatrix package for forward simulating reflectivity.')
 
 def parse_header(f, date, stream='default'):
         '''
@@ -1641,13 +1645,16 @@ class Psd(Instrument):
         Compute bulk properties (only if True)
     calc_gamma_params: bool
         Calculate gamma fit parameters using DIGF technique
+    dbz_matched: 4-element tuple of None or xarray.DataArray of dbz from match.Radar()
+        Optionally compute density-aware bulk properties using matched radar Z
     """
 
     def __init__(
             self, filepath_2ds, filepath_hvps, date, p3_object=None,
             start_time=None, end_time=None, tres='1S',
             software='UIOOPS', binlims=(0.1, 1.4, 30.), ovld_thresh=0.7,
-            calc_bulk=False, calc_gamma_params=False):
+            calc_bulk=False, calc_gamma_params=False,
+            dbz_matched=(None, None, None, None)):
         self.name = f'{software} PSD'
         if (filepath_2ds is not None) and (filepath_hvps is not None):
             self.instruments = '2DS and HVPS'
@@ -1730,7 +1737,7 @@ class Psd(Instrument):
         
         # compute bulk properties
         if calc_bulk:
-            self.data = self.bulk_properties(calc_gamma_params)
+            self.data = self.bulk_properties(calc_gamma_params, dbz_matched)
         
     def readfile_uioops(
             self, filepath_2ds, filepath_hvps, date,
@@ -2329,7 +2336,8 @@ class Psd(Instrument):
 
         return psd_merged
                 
-    def bulk_properties(self, calc_gamma_params=False, matched_objects=None):
+    def bulk_properties(
+            self, calc_gamma_params=False, dbz_matched=(None, None, None, None)):
         """
         Compute bulk microphysical properties from the PSD data.
         
@@ -2337,7 +2345,7 @@ class Psd(Instrument):
         ----------
         calc_gamma_params: boolean
             Optionally compute PSD N0, mu, lambda (takes some time)
-        matched_objects : impacts_tools.match.Radar() object or list of objects
+        dbz_matched : tuple of impacts_tools.match.Radar().dbz_* xarray.DataArray or None
             Matched radar data to use in deriving a time-varying m-D relationship.
         """
         with np.errstate(divide='ignore', invalid='ignore'): # suppress divide by zero warnings
@@ -2454,22 +2462,139 @@ class Psd(Instrument):
                         N0_hy_temp[i] = sol.x[0]
                         mu_hy_temp[i] = sol.x[1]
                         lam_hy_temp[i] = sol.x[2]
+                        
+            ## ===== Leinonen and Szyrmer (2015) m-D products =====
+            compute_ls = False # bool for calculating optional LS products
+            if (
+                    dbz_matched[0] is not None) or (dbz_matched[1] is not None) or (
+                    dbz_matched[2] is not None) or (dbz_matched[3] is not None):
+                compute_ls = True
+                
+                # compute dbz from PSD across all four wavelengths
+                # uses forward routine, pytmatrix package, and scattering db
+                Z = forward_Z() #initialize class
+                Z.set_PSD(
+                    PSD=self.data.ND.T.values * 10.**8, D=self.data.bin_center.values / 1000.,
+                    dD=self.data.bin_width.values / 100.) # get in proper fmt (mks units)
+                Z.load_split_L15() # load Leinonen output
+                Z.fit_sigmas() # fit backscatter cross-sections
+                Z.fit_rimefrac() # fit riming fractions
+                Z.calc_Z() # calculate dbz...outputs are Z.Z_x, Z.Z_ku, Z.Z_ka, Z.Z_w
+                
+                # compute dbz error between PSD dbz and matched radar dbz
+                elwp_arr = np.array(
+                    [0., 0.05, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.75, 1., 2.]
+                ) # mix of orig and interp riming categories from LS15
+                am_array = Z.a_coeff # mix of orig and interp mass prefactor from LS15
+                bm_array = Z.b_coeff # mix of orig and interp mass exponent from LS15
+
+                dbz_error = np.zeros(Z.Z_w.shape)
+                for j in range(Z.Z_w.shape[1]):
+                    for i in range(len(elwp_arr)): # compute dbz error for each elwp cat
+                        if (dbz_matched[0] is not None) and (
+                                ~np.isnan(dbz_matched[0].values[j])) and (
+                                ~np.isnan(Z.Z_x[i, j])):
+                            dbz_error[i, j] += np.abs(dbz_matched[0].values[j] - Z.Z_x[i, j])
+                        if (dbz_matched[1] is not None) and (
+                                ~np.isnan(dbz_matched[1].values[j])) and (
+                                ~np.isnan(Z.Z_ku[i, j])):
+                            dbz_error[i, j] += np.abs(dbz_matched[1].values[j] - Z.Z_ku[i, j])
+                        if (dbz_matched[2] is not None) and (
+                                ~np.isnan(dbz_matched[2].values[j])) and (
+                                ~np.isnan(Z.Z_ka[i, j])):
+                            dbz_error[i, j] += np.abs(dbz_matched[2].values[j] - Z.Z_ka[i, j])
+                        if (dbz_matched[3] is not None) and (
+                                ~np.isnan(dbz_matched[3].values[j])) and (
+                                ~np.isnan(Z.Z_w[i, j])):
+                            dbz_error[i, j] += np.abs(dbz_matched[3].values[j] - Z.Z_w[i, j])
+                
+                # find best a/b m-D coefficient pair for each time
+                am = xr.DataArray(
+                    data = am_array[np.argmin(dbz_error, axis=0)],
+                    dims = 'time',
+                    coords = dict(time = self.data.time),
+                    attrs = dict(
+                        description='Prefactor coefficient in Leinonen & Szyrmer (2015) m-D relationships',
+                        units = 'g cm**-bm'
+                    )
+                )
+                bm = xr.DataArray(
+                    data = bm_array[np.argmin(dbz_error, axis=0)],
+                    dims = 'time',
+                    coords = dict(time = self.data.time),
+                    attrs = dict(
+                        description='Exponent coefficient in Leinonen & Szyrmer (2015) m-D relationships',
+                        units = '#'
+                    )
+                )
+                
+                # compute bulk properties
+                mass_particle = (am * (
+                    self.data['bin_center'] / 10.
+                ) ** bm).T # particle mass (g)
+                mass_ls = mass_particle * self.data['count'] # binned mass (g)
+                mass_rel_ls = mass_ls.cumsum(
+                    dim='size') / mass_ls.cumsum(dim='size')[-1, :] # binned mass fraction
+                z_ls_temp = 1.e12 * (0.174 / 0.93) * (6. / np.pi / 0.934) ** 2 * (
+                    mass_particle ** 2 * self.data['count'] / self.data['sv']
+                ).sum(dim='size') # simulated Z (mm^6 m^-3)
+                iwc_ls_temp = 10. ** 6 * (mass_ls / self.data['sv']).sum(dim='size') # IWC (g m-3)
+                dmm_ls_temp = xr.full_like(nt_temp, np.nan) # allocate array of nan
+                dmm_ls_temp[~np.isnan(mass_rel_ls[-1,:])] = self.data['bin_center'][
+                    (0.5 - mass_rel_ls[:, ~np.isnan(mass_rel_ls[-1,:])]).argmin(dim='size')] # med mass D (mm)
+                dm_ls_temp = 10. * (
+                    (self.data['bin_center'] / 10.) * mass_ls /
+                    self.data['sv']).sum(dim='size') / (
+                    mass_ls / self.data['sv']
+                ).sum(dim='size') # mass-weighted mean D from Chase et al. (2020) (mm)
+                ar_ls_temp = (
+                    self.data['area_ratio'] * mass_ls / self.data['sv']).sum(dim='size') / (
+                    mass_ls / self.data['sv']
+                ).sum(dim='size') # mass-weighted mean area ratio
+                asr_ls_temp = (
+                    self.data['aspect_ratio'] * mass_ls / self.data['sv']).sum(dim='size') / (
+                    mass_ls / self.data['sv']
+                ).sum(dim='size') # mass-weighted mean aspect ratio
+                rhoe_ls_temp = (iwc_ls_temp / 10. ** 6) / vol # eff density from Chase et al. (2018) (g cm**-3)
+                
+                # optionally compute gamma fit params for each observation
+                if calc_gamma_params:
+                    N0_ls_temp = -999. * np.ones(len(self.data.time))
+                    mu_ls_temp = -999. * np.ones(len(self.data.time))
+                    lam_ls_temp = -999. * np.ones(len(self.data.time))
+                    for i in range(len(self.data.time)):
+                        if iwc_ls_temp[i] > 0: # only compute when there's a PSD
+                            sol = least_squares(
+                                self.calc_chisquare, x0, method='lm', ftol=1e-9, xtol=1e-9, max_nfev=int(1e6),
+                                args=(
+                                    nt_temp[i], iwc_ls_temp[i], z_ls_temp[i], 0.00528, 2.1
+                                )
+                            ) # solve the gamma params using least squares minimziation
+                            N0_ls_temp[i] = sol.x[0]
+                            mu_ls_temp[i] = sol.x[1]
+                            lam_ls_temp[i] = sol.x[2]
         
         # mask bad gamma parameter values, or set to NaN if skipping
         if calc_gamma_params:
             N0_bf_temp = np.ma.masked_where(N0_bf_temp == -999., N0_bf_temp)
             N0_hy_temp = np.ma.masked_where(N0_hy_temp == -999., N0_hy_temp)
+            N0_ls_temp = np.ma.masked_where(N0_ls_temp == -999., N0_ls_temp)
             mu_bf_temp = np.ma.masked_where(mu_bf_temp == -999., mu_bf_temp)
             mu_hy_temp = np.ma.masked_where(mu_hy_temp == -999., mu_hy_temp)
+            mu_ls_temp = np.ma.masked_where(mu_hy_temp == -999., mu_ls_temp)
             lam_bf_temp = np.ma.masked_where(lam_bf_temp == -999., lam_bf_temp)
             lam_hy_temp = np.ma.masked_where(lam_hy_temp == -999., lam_hy_temp)
+            lam_ls_temp = np.ma.masked_where(lam_hy_temp == -999., lam_ls_temp)
         else:
             N0_bf_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
             N0_hy_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
+            N0_ls_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
             mu_bf_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
             mu_hy_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
+            mu_ls_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
             lam_bf_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
             lam_hy_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
+            lam_ls_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
             
         # add bulk properties to PSD object
         n = xr.DataArray(
@@ -2658,40 +2783,124 @@ class Psd(Instrument):
                 relationship='m = 0.00528 * D ** 2.1',
                 units = 'g cm-3')
         )
+        if compute_ls: # additional LS15 products
+            N0_ls = xr.DataArray(
+                data = N0_ls_temp,
+                dims = 'time',
+                coords = dict(time=self.data.time),
+                attrs = dict(
+                    description='PSD intercept parameter [Leinonen and Szyrmer (2015) m-D relationships]',
+                    units = 'cm-4')
+            ).where(np.sum(dbz_error, axis=0) > 0.)
+            mu_ls = xr.DataArray(
+                data = mu_ls_temp,
+                dims = 'time',
+                coords = dict(time=self.data.time),
+                attrs = dict(
+                    description='PSD shape parameter [Leinonen and Szyrmer (2015) m-D relationships]',
+                    units = '#')
+            ).where(np.sum(dbz_error, axis=0) > 0.)
+            lam_ls = xr.DataArray(
+                data = lam_ls_temp,
+                dims = 'time',
+                coords = dict(time=self.data.time),
+                attrs = dict(
+                    description='PSD slope parameter [Leinonen and Szyrmer (2015) m-D relationships]',
+                    units = 'cm-1')
+            ).where(np.sum(dbz_error, axis=0) > 0.)
+            iwc_ls = xr.DataArray(
+                data = iwc_ls_temp,
+                dims = 'time',
+                coords = dict(time=self.data.time),
+                attrs = dict(
+                    description='Ice water content [Leinonen and Szyrmer (2015) m-D relationships]',
+                    units = 'g m-3')
+            ).where(np.sum(dbz_error, axis=0) > 0.)
+            dm_ls = xr.DataArray(
+                data = dm_ls_temp,
+                dims = 'time',
+                coords = dict(time=self.data.time),
+                attrs = dict(
+                    description='Mass-weighted mean diameter [Leinonen and Szyrmer (2015) m-D relationships]',
+                    units = 'mm')
+            ).where(np.sum(dbz_error, axis=0) > 0.)
+            dmm_ls = xr.DataArray(
+                data = dmm_ls_temp,
+                dims = 'time',
+                coords = dict(time=self.data.time),
+                attrs = dict(
+                    description='Median mass diameter [Leinonen and Szyrmer (2015) m-D relationships]',
+                    units = 'mm')
+            ).where(np.sum(dbz_error, axis=0) > 0.)
+            ar_ls = xr.DataArray(
+                data = ar_ls_temp,
+                dims = 'time',
+                coords = dict(time=self.data.time),
+                attrs = dict(
+                    description='Mass-weighted mean area ratio [Leinonen and Szyrmer (2015) m-D relationships]',
+                    units = '#')
+            ).where(np.sum(dbz_error, axis=0) > 0.)
+            asr_ls = xr.DataArray(
+                data = asr_ls_temp,
+                dims = 'time',
+                coords = dict(time=self.data.time),
+                attrs = dict(
+                    description='Mass-weighted mean aspect ratio [Leinonen and Szyrmer (2015) m-D relationships]',
+                    units = '#')
+            ).where(np.sum(dbz_error, axis=0) > 0.)
+            rhoe_ls = xr.DataArray(
+                data = rhoe_ls_temp,
+                dims = 'time',
+                coords = dict(time=self.data.time),
+                attrs = dict(
+                    description='Effective density [Leinonen and Szyrmer (2015) m-D relationships]',
+                    units = 'g cm-3')
+            ).where(np.sum(dbz_error, axis=0) > 0.)
+            data_vars = {
+                'n': n,
+                'am': am.where(np.sum(dbz_error, axis=0) > 0.),
+                'bm': bm.where(np.sum(dbz_error, axis=0) > 0.),
+                'N0_bf': N0_bf, 'N0_hy': N0_hy, 'N0_ls': N0_ls,
+                'mu_bf': mu_bf, 'mu_hy': mu_hy, 'mu_ls': mu_ls,
+                'lambda_bf': lam_bf, 'lambda_hy': lam_hy, 'lambda_ls': lam_ls,
+                'iwc_bf': iwc_bf, 'iwc_hy': iwc_hy, 'iwc_ls': iwc_ls,
+                'dm_bf': dm_bf, 'dm_hy': dm_hy, 'dm_ls': dm_ls,
+                'dmm_bf': dmm_bf, 'dmm_hy': dmm_hy, 'dmm_ls': dmm_ls,
+                'rhoe_bf': rhoe_bf, 'rhoe_hy': rhoe_hy, 'rhoe_ls': rhoe_ls,
+                'area_ratio_mean_n': ar_nw, 'area_ratio_mean_bf': ar_bf,
+                'area_ratio_mean_hy': ar_hy, 'area_ratio_mean_ls': ar_ls,
+                'aspect_ratio_mean_n': asr_nw, 'aspect_ratio_mean_bf': asr_bf,
+                'aspect_ratio_mean_hy': asr_hy, 'aspect_ratio_mean_ls': asr_ls
+            }
+        else:
+            data_vars = {
+                'n': n, 'N0_bf': N0_bf, 'N0_hy': N0_hy, 'mu_bf': mu_bf, 'mu_hy': mu_hy,
+                'lambda_bf': lam_bf, 'lambda_hy': lam_hy, 'iwc_bf': iwc_bf, 'iwc_hy': iwc_hy,
+                'dm_bf': dm_bf, 'dm_hy': dm_hy, 'dmm_bf': dmm_bf, 'dmm_hy': dmm_hy,
+                'rhoe_bf': rhoe_bf, 'rhoe_hy': rhoe_hy,
+                'area_ratio_mean_n': ar_nw, 'area_ratio_mean_bf': ar_bf, 'area_ratio_mean_hy': ar_hy,
+                'aspect_ratio_mean_n': asr_nw, 'aspect_ratio_mean_bf': asr_bf, 'aspect_ratio_mean_hy': asr_hy
+            }
         
         # put bulk properties together into an XArray DataSet
         ds = xr.Dataset(
-            data_vars={
-                'n': n,
-                'N0_bf': N0_bf,
-                'N0_hy': N0_hy,
-                'mu_bf': mu_bf,
-                'mu_hy': mu_hy,
-                'lambda_bf': lam_bf,
-                'lambda_hy': lam_hy,
-                'iwc_bf': iwc_bf,
-                'iwc_hy': iwc_hy,
-                'dm_bf': dm_bf,
-                'dm_hy': dm_hy,
-                'dmm_bf': dmm_bf,
-                'dmm_hy': dmm_hy,
-                'rhoe_bf': rhoe_bf,
-                'rhoe_hy': rhoe_hy,
-                'area_ratio_mean_n': ar_nw,
-                'area_ratio_mean_bf': ar_bf,
-                'area_ratio_mean_hy': ar_hy,
-                'aspect_ratio_mean_n': asr_nw,
-                'aspect_ratio_mean_bf': asr_bf,
-                'aspect_ratio_mean_hy': asr_hy
-            },
-            coords={
+            data_vars = data_vars,
+            coords = {
                 'time': self.data.time
             }
         )
         if not calc_gamma_params: # remove gamma params if skipping calculation
-            ds = ds.drop_vars(
-                ['N0_bf', 'mu_bf', 'lambda_bf', 'N0_hy', 'mu_hy', 'lambda_hy']
-            )
+            if compute_ls:
+                ds = ds.drop_vars(
+                    [
+                        'N0_bf', 'mu_bf', 'lambda_bf', 'N0_hy', 'mu_hy', 'lambda_hy',
+                        'N0_ls', 'mu_ls', 'lambda_ls'
+                    ]
+                )
+            else:
+                ds = ds.drop_vars(
+                    ['N0_bf', 'mu_bf', 'lambda_bf', 'N0_hy', 'mu_hy', 'lambda_hy']
+                )
         
         ds_merged = xr.merge(
             [self.data, ds], combine_attrs='drop_conflicts'
