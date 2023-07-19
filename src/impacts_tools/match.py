@@ -12,6 +12,8 @@ from scipy.spatial import cKDTree
 from scipy.ndimage import generic_filter
 from abc import ABC, abstractmethod
 from scipy.ndimage import gaussian_filter
+import warnings
+warnings.filterwarnings('ignore', category=RuntimeWarning, message='Degrees of freedom')
 
 class Match(ABC):
     """
@@ -69,7 +71,7 @@ class Match(ABC):
                 # window size reflects similar horiz (300 m) and vert (270 m)
                 dbz_std = radar_dataset.dbz.rolling(
                     range=9, time=3, center=True
-                ).std()
+                ).std(skipna=True)
 
                 # compute top percentile of spectrum width
                 spw_p01 = np.nanpercentile(ds_qc.width.values, 1)
@@ -105,10 +107,10 @@ class Match(ABC):
                 # window size reflects similar horiz (300 m) and vert (270 m)
                 dbz_ku_std = radar_dataset.dbz_ku.rolling(
                     range=9, time=3, center=True
-                ).std()
+                ).std(skipna=True)
                 dbz_ka_std = radar_dataset.dbz_ka.rolling(
                     range=9, time=3, center=True
-                ).std()
+                ).std(skipna=True)
 
                 # compute top percentile of spectrum width
                 spw_ku_p01 = np.nanpercentile(ds_qc.width_ku.values, 1)
@@ -269,16 +271,16 @@ class Match(ABC):
                         np.isfinite(temp_datafiltered)
                     )
             mask[
-                (lidar_dataset['height'].values >= alt_bounds_p3[0] - 150.) &
-                (lidar_dataset['height'].values <= alt_bounds_p3[1] + 150.) &
+                (lidar_dataset['height'].values >= alt_bounds_p3[0] - 250.) &
+                (lidar_dataset['height'].values <= alt_bounds_p3[1] + 250.) &
                 (lidar_dataset['atb_1064'].values >= 1.e-3) &
                 (lidar_dataset['atb_532'].values >= 1.e-3) &
                 (lidar_dataset['atb_355'].values >= 1.e-3) &
                 (lidar_dataset['height'].values >= 500.)] = False
         elif self.name == 'Matched CPL Profiles': # L2 profile data
             mask[
-                (lidar_dataset['height'].values >= alt_bounds_p3[0] - 150.) &
-                (lidar_dataset['height'].values <= alt_bounds_p3[1] + 150.) &
+                (lidar_dataset['height'].values >= alt_bounds_p3[0] - 250.) &
+                (lidar_dataset['height'].values <= alt_bounds_p3[1] + 250.) &
                 (~np.isnan(lidar_dataset['ext_1064'].values)) &
                 (~np.isnan(lidar_dataset['ext_532'].values)) &
                 (~np.isnan(lidar_dataset['ext_355'].values)) &
@@ -815,9 +817,7 @@ class Match(ABC):
             W_d_k2 = np.ma.masked_where(
                 np.ma.getmask(vel_matched), W_d_k.copy()
             ) # mask weights where vel is masked
-            w1 = np.ma.sum(
-                W_d_k2 * 10.**(vel_matched / 10.), axis=1
-            ) # weighted sum of linear Z per N-s period
+            w1 = np.ma.sum(W_d_k2 * vel_matched, axis=1) # weighted sum of vel per N-s period
             w2 = np.ma.sum(W_d_k2, axis=1) # sum of weights per N-s period
             vel_matched = w1 / w2 # flatten matched vel
             
@@ -852,9 +852,7 @@ class Match(ABC):
                 W_d_k2 = np.ma.masked_where(
                     np.ma.getmask(vel2_matched), W_d_k.copy()
                 ) # mask weights where vel is masked
-                w1 = np.ma.sum(
-                    W_d_k2 * 10.**(vel2_matched / 10.), axis=1
-                ) # weighted sum of linear Z per N-s period
+                w1 = np.ma.sum(W_d_k2 * vel2_matched, axis=1) # weighted sum of vel per N-s period
                 w2 = np.ma.sum(W_d_k2, axis=1) # sum of weights per N-s period
                 vel2_matched = w1 / w2 # flatten matched vel
                 

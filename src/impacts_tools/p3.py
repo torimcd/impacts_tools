@@ -11,7 +11,7 @@ from scipy.optimize import least_squares
 try: # try importing the pytmatrix package
     from impacts_tools.forward import *
 except ImportError:
-    print('Note: Install the pytmatrix package for forward simulating reflectivity.')
+    print('Note: Install the pytmatrix package if you want to forward simulate reflectivity.')
 
 def parse_header(f, date, stream='default'):
         '''
@@ -442,8 +442,12 @@ class P3():
                 description='Total air temperature',
                 units='degrees_Celsius')
         )
+        if (fmt == 'iwg') or ('Dew_Point' in readfile.keys()):
+            td_data = np.ma.masked_invalid(readfile['Dew_Point'])
+        else:
+            td_data = np.ma.masked_invalid(readfile['Dew/Frost_Point'])
         td = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Dew_Point']), dims = ['time'],
+            data = td_data, dims = ['time'],
             coords = dict(time = time),
             attrs = dict(
                 description='Dew point temperature',
@@ -2528,6 +2532,44 @@ class Psd(Instrument):
                     )
                 )
                 
+                # find best forward dbz
+                dbz_w = xr.DataArray(
+                    data = Z.Z_w[np.argmin(dbz_error, axis=0), np.arange(Z.Z_w.shape[1])],
+                    dims = 'time',
+                    coords = dict(time = self.data.time),
+                    attrs = dict(
+                        description='Forward simulated W-band Z from PSD and best riming estimate',
+                        units = 'dBZ'
+                    )
+                )
+                dbz_ka = xr.DataArray(
+                    data = Z.Z_ka[np.argmin(dbz_error, axis=0), np.arange(Z.Z_ka.shape[1])],
+                    dims = 'time',
+                    coords = dict(time = self.data.time),
+                    attrs = dict(
+                        description='Forward simulated Ka-band Z from PSD and best riming estimate',
+                        units = 'dBZ'
+                    )
+                )
+                dbz_ku = xr.DataArray(
+                    data = Z.Z_ku[np.argmin(dbz_error, axis=0), np.arange(Z.Z_ku.shape[1])],
+                    dims = 'time',
+                    coords = dict(time = self.data.time),
+                    attrs = dict(
+                        description='Forward simulated Ku-band Z from PSD and best riming estimate',
+                        units = 'dBZ'
+                    )
+                )
+                dbz_x = xr.DataArray(
+                    data = Z.Z_x[np.argmin(dbz_error, axis=0), np.arange(Z.Z_x.shape[1])],
+                    dims = 'time',
+                    coords = dict(time = self.data.time),
+                    attrs = dict(
+                        description='Forward simulated X-band Z from PSD and best riming estimate',
+                        units = 'dBZ'
+                    )
+                )
+                
                 # compute bulk properties
                 mass_particle = (am * (
                     self.data['bin_center'] / 10.
@@ -2547,6 +2589,10 @@ class Psd(Instrument):
                     self.data['sv']).sum(dim='size') / (
                     mass_ls / self.data['sv']
                 ).sum(dim='size') # mass-weighted mean D from Chase et al. (2020) (mm)
+                dmelt_ls_temp = ((6. * mass_particle) / (np.pi * 0.997)) ** (1. / 3.)
+                nw_ls_temp = np.log10((1e5) * (4.**4 / 6) * (
+                        dmelt_ls_temp**3 * self.data.ND * self.data.bin_width).sum(dim='size') ** 5 / (
+                        dmelt_ls_temp**4 * self.data.ND * self.data.bin_width).sum(dim='size') ** 4)
                 ar_ls_temp = (
                     self.data['area_ratio'] * mass_ls / self.data['sv']).sum(dim='size') / (
                     mass_ls / self.data['sv']
@@ -2784,6 +2830,14 @@ class Psd(Instrument):
                 units = 'g cm-3')
         )
         if compute_ls: # additional LS15 products
+            nw_ls = xr.DataArray(
+                data = nw_ls_temp,
+                dims = 'time',
+                coords = dict(time=self.data.time),
+                attrs = dict(
+                    description='Normalized PSD intercept parameter [Leinonen and Szyrmer (2015) m-D relationships]',
+                    units = 'cm-4')
+            ).where(np.sum(dbz_error, axis=0) > 0.)
             N0_ls = xr.DataArray(
                 data = N0_ls_temp,
                 dims = 'time',
@@ -2857,10 +2911,11 @@ class Psd(Instrument):
                     units = 'g cm-3')
             ).where(np.sum(dbz_error, axis=0) > 0.)
             data_vars = {
+                'dbz_w_psd': dbz_w, 'dbz_ka_psd': dbz_ka, 'dbz_ku_psd': dbz_ku, 'dbz_x_psd': dbz_x, 
                 'n': n,
                 'am': am.where(np.sum(dbz_error, axis=0) > 0.),
                 'bm': bm.where(np.sum(dbz_error, axis=0) > 0.),
-                'N0_bf': N0_bf, 'N0_hy': N0_hy, 'N0_ls': N0_ls,
+                'N0_bf': N0_bf, 'N0_hy': N0_hy, 'nw_ls': nw_ls, 'N0_ls': N0_ls,
                 'mu_bf': mu_bf, 'mu_hy': mu_hy, 'mu_ls': mu_ls,
                 'lambda_bf': lam_bf, 'lambda_hy': lam_hy, 'lambda_ls': lam_ls,
                 'iwc_bf': iwc_bf, 'iwc_hy': iwc_hy, 'iwc_ls': iwc_ls,
