@@ -914,6 +914,8 @@ class Instrument(ABC):
                 )
                 if pd.to_timedelta(tres) > td_ds: # upsampling not supported
                     return self.data.resample(time=tres).mean(skipna=True, keep_attrs=True)
+                else:
+                    return self.data
             else: # for datasets > 1 Hz frequency (e.g., TAMMS)
                 sum_vars = []
                 ds_downsampled = self.data.resample(
@@ -1005,7 +1007,7 @@ class Tamms(Instrument):
         # merge the native (*_raw) and downsampled resolution datasets
         self.data = xr.merge([self.data, ds_downsampled])
         
-    def readfile(self, filepath, date):#, p3_object=None, start_time=None, end_time=None, tres='1S'):
+    def readfile(self, filepath, date):
         """
         Reads the TAMMS data file and unpacks the fields into an xarray.Dataset
 
@@ -1220,14 +1222,41 @@ class Und(Instrument):
         # read the raw data
         self.data = self.readfile(filepath, date)
         """
-        xarray.Dataset of UND summary variables and attributes
+        xarray.Dataset of UND summary variables and attributes.
+        Some instruments (WCM, RICE-2) not available all deployments.
         Dimensions:
             - time: np.array(np.datetime64[ms]) - The UTC time start of the N-s upsampled interval
         Coordinates:
             - time (time): np.array(np.datetime64[ms]) - The UTC time start of the N-s upsampled interval
         Variables:
-            - wwnd_std (time) : xarray.DataArray(float) - Standard deviation of the vertical component wind speed (m/s)
-            * variables without _raw appended are averaged over the time interval specified
+            - lon (time) : xarray.DataArray(float) - Aircraft longitude (degrees_east)
+            - lat (time) : xarray.DataArray(float) - Aircraft latitude (degrees_north)
+            - alt_gps (time) : xarray.DataArray(float) - Aircraft GPS altitude (above mean sea level) (m)
+            - alt_pres (time) : xarray.DataArray(float) - Aircraft pressure altitude (feet)
+            - grnd_spd (time) : xarray.DataArray(float) - Aircraft ground speed (m/s)
+            - tas (time) : xarray.DataArray(float) - Aircraft true air speed (m/s)
+            - ias (time) : xarray.DataArray(float) - Aircraft indicated air speed (m/s)
+            - zvel (time) : xarray.DataArray(float) - Aircraft vertical velocity (m/s)
+            - heading (time) : xarray.DataArray(float) - Aircraft true heading (degrees)
+            - track (time) : xarray.DataArray(float) - Aircraft track angle (degrees)
+            - pitch (time) : xarray.DataArray(float) - Aircraft pitch angle (degrees)
+            - roll (time) : xarray.DataArray(float) - Aircraft roll angle (degrees)
+            - temp (time) : xarray.DataArray(float) - Aircraft ambient temperature (degrees_Celsius)
+            - dwpt (time) : xarray.DataArray(float) - Aircraft dew point temperature (degrees_Celsius)
+            - pres_static (time) : xarray.DataArray(float) - Aircraft static pressure (hPa)
+            - wspd (time) : xarray.DataArray(float) - Aircraft wind speed (m/s)
+            - wdir (time) : xarray.DataArray(float) - Aircraft wind direction (degrees)
+            - lwc_king (time) : xarray.DataArray(float) - Liquid Water Content based on King Probe measurement (adjusted) (g m-3)
+            - lwc_cdp (time) : xarray.DataArray(float) - Liquid Water Content based on the Cloud Droplet Probe (g m-3)
+            - mdd_cdp (time) : xarray.DataArray(float) - Cloud Droplet Probe mean droplet diameter (um)
+            - re_cdp (time) : xarray.DataArray(float) - Cloud Droplet Probe effective droplet radius (um)
+            - n_cdp (time) : xarray.DataArray(float) - Number concentration of droplets based on the Cloud Droplet Probe (cm-3)
+            - freq_rice (time) : xarray.DataArray(float) - Frequency from the Rosemont Icing Detector (Hz)
+            - freq_rice2 (time) : xarray.DataArray(float) - Frequency from the backup Rosemont Icing Detector (Hz)
+            - twc_wcm (time) : xarray.DataArray(float) - Total Water Content based on the WCM probe measurement (adjusted) (g m-3)
+            - lwc_wcm (time) : xarray.DataArray(float) - Liquid Water Content based on the WCM probe measurement (adjusted) (g m-3)
+            - iwc_wcm (time) : xarray.DataArray(float) - Ice Water Content based on the WCM probe measurement (g m-3)
+            - flag_cloud (time) : xarray.DataArray(float) - Parameter to determine if the WCM probe is in cloud or not (0: out of cloud; 1 - in cloud)
         """
         
         # trim dataset to P-3 time bounds or from specified start/end
@@ -1268,6 +1297,13 @@ class Und(Instrument):
         header = parse_header(
             open(filepath, 'r', encoding = 'ISO-8859-1'), date, stream='und'
         )
+        
+        # 2023 - tweak varname for backup RICE
+        rice_inds = [
+            varind for varind, var in enumerate(header['VNAME']) if var == 'The current Sensor'
+        ]
+        if len(rice_inds) == 2:
+            header['VNAME'][rice_inds[1]] = 'The current Sensor2'
 
         # parse the data
         data_raw = np.genfromtxt(
@@ -1334,8 +1370,12 @@ class Und(Instrument):
                 units = 'degrees_Celsius'
             )
         )
+        if '2020' in date:
+            vname_tas = 'True Air Speed'
+        else:
+            vname_tas = 'Aircraft True Air Speed'
         tas = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft True Air Speed']),
+            data = np.ma.masked_invalid(readfile[vname_tas]),
             dims = 'time',
             coords = dict(time=time),
             attrs = dict(
@@ -1528,87 +1568,96 @@ class Und(Instrument):
                 description='Frequency from the Rosemont Icing Detector',
                 units='Hz')
         )
-        twc_wcm = xr.DataArray(
-            data = np.ma.masked_invalid(
-                readfile['Total Water Content based on the WCM Probe measurement adjusted for baseline offset']
-            ),
-            dims = 'time',
-            coords = dict(time = time),
-            attrs = dict(
-                description='Total Water Content based on the WCM probe measurement (adjusted)',
-                units='g m-3')
-        )
-        lwc_wcm = xr.DataArray(
-            data = np.ma.masked_invalid(
-                readfile['Liquid Water Content element 083 based on the WCM Probe measurement adjusted for baseline offset']
-            ),
-            dims = 'time',
-            coords = dict(time = time),
-            attrs = dict(
-                description='Liquid Water Content based on the WCM probe measurement (adjusted)',
-                units='g m-3')
-        )
-        iwc_wcm = xr.DataArray(
-            data = np.ma.masked_invalid(
-                readfile[
-                    'Ice Water Content based on the WCM Probe measurement calculated '
-                    'with sampling efficiencies and adjusted for baseline offset'
-                ]
-            ),
-            dims = 'time',
-            coords = dict(time = time),
-            attrs = dict(
-                description = (
-                    'Ice Water Content based on the WCM probe measurement '
-                    '(calculated with sampling efficiencies and adjusted for baseline offset)'
+        data_vars = {
+            'lon': lon, 'lat': lat,
+            'alt_gps': alt, 'alt_pres': palt_ac,
+            'grnd_spd': grdspd, 'tas': tas, 'ias': ias,
+            'zvel': w,
+            'heading': head, 'track': track, 'pitch': pitch, 'roll': roll,
+            'temp': temp, 'dwpt': td,
+            'pres_static': spress,
+            'wspd': wspd, 'wdir': wdir,
+            'lwc_king': lwc_king, 'lwc_cdp': lwc_cdp,
+            'mdd_cdp': mdd_cdp, 're_cdp': re_cdp, 'n_cdp': n_cdp,
+            'freq_rice': ricefreq
+        }
+        if '2023' in date:
+            ricefreq2 = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['The current Sensor2']),
+                dims = 'time',
+                coords = dict(time = time),
+                attrs = dict(
+                    description='Frequency from the backup Rosemont Icing Detector',
+                    units='Hz')
+            )
+            data_vars.update({'freq_rice2': ricefreq2})
+        if ('2022' in date) or ('2023' in date): # WCM vars
+            twc_wcm = xr.DataArray(
+                data = np.ma.masked_invalid(
+                    readfile['Total Water Content based on the WCM Probe measurement adjusted for baseline offset']
                 ),
-                units='g m-3')
-        )
-        flag_cld = xr.DataArray(
-            data = np.ma.masked_invalid(
-                readfile['Parameter to determine if the WCM Probe is in cloud or not based on CIP']
-            ),
-            dims = 'time',
-            coords = dict(time = time),
-            attrs = dict(
-                description = (
-                    'Parameter to determine if the WCM probe is in cloud or not '
-                    '(0: out of cloud; 1 - in cloud)'
+                dims = 'time',
+                coords = dict(time = time),
+                attrs = dict(
+                    description='Total Water Content based on the WCM probe measurement (adjusted)',
+                    units='g m-3')
+            )
+            if '2022' in date:
+                vname_lwcwcm = (
+                    'Liquid Water Content element 083 based on the WCM Probe '
+                    'measurement adjusted for baseline offset'
+                )
+            else:
+                vname_lwcwcm = 'Liquid Water Content' # original varname clipped following "(element 083)"
+            lwc_wcm = xr.DataArray(
+                data = np.ma.masked_invalid(
+                    readfile[vname_lwcwcm]
                 ),
-                units='-')
-        )
+                dims = 'time',
+                coords = dict(time = time),
+                attrs = dict(
+                    description='Liquid Water Content based on the WCM probe measurement (adjusted)',
+                    units='g m-3')
+            )
+            iwc_wcm = xr.DataArray(
+                data = np.ma.masked_invalid(
+                    readfile[
+                        'Ice Water Content based on the WCM Probe measurement calculated '
+                        'with sampling efficiencies and adjusted for baseline offset'
+                    ]
+                ),
+                dims = 'time',
+                coords = dict(time = time),
+                attrs = dict(
+                    description = (
+                        'Ice Water Content based on the WCM probe measurement '
+                        '(calculated with sampling efficiencies and adjusted for baseline offset)'
+                    ),
+                    units='g m-3')
+            )
+            flag_cld = xr.DataArray(
+                data = np.ma.masked_invalid(
+                    readfile['Parameter to determine if the WCM Probe is in cloud or not based on CIP']
+                ),
+                dims = 'time',
+                coords = dict(time = time),
+                attrs = dict(
+                    description = (
+                        'Parameter to determine if the WCM probe is in cloud or not '
+                        '(0: out of cloud; 1 - in cloud)'
+                    ),
+                    units='-')
+            )
+            data_vars.update(
+                {
+                    'twc_wcm': twc_wcm, 'lwc_wcm': lwc_wcm, 'iwc_wcm': iwc_wcm,
+                    'flag_cloud': flag_cld
+                }
+            )
 
         # put everything together into an XArray Dataset
         ds = xr.Dataset(
-            data_vars={
-                'lon': lon,
-                'lat': lat,
-                'alt_gps': alt,
-                'alt_pres': palt_ac,
-                'grnd_spd': grdspd,
-                'tas': tas,
-                'ias': ias,
-                'zvel': w,
-                'heading': head,
-                'track': track,
-                'pitch': pitch,
-                'roll': roll,
-                'temp': temp,
-                'dwpt': td,
-                'pres_static': spress,
-                'wspd': wspd,
-                'wdir': wdir,
-                'lwc_king': lwc_king,
-                'lwc_cdp': lwc_cdp,
-                'mdd_cdp': mdd_cdp,
-                're_cdp': re_cdp,
-                'n_cdp': n_cdp,
-                'freq_rice': ricefreq,
-                'twc_wcm': twc_wcm,
-                'lwc_wcm': lwc_wcm,
-                'iwc_wcm': iwc_wcm,
-                'flag_cloud': flag_cld
-            },
+            data_vars = data_vars,
             coords={
                 'time': time
             },
