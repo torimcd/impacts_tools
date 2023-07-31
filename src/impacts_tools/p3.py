@@ -907,6 +907,40 @@ class Instrument(ABC):
                 return ds_downsampled
             else:
                 return self.data
+        elif self.name == 'CDP': # special resampling of some variables
+            td_ds = pd.to_timedelta(
+                self.data['time'][1].values - self.data['time'][0].values
+            )
+            if pd.to_timedelta(tres) > td_ds: # upsampling not supported
+                # vars to sum along time dimension
+                if 'Count' in self.datastream:
+                    sum_vars = ['count']
+                    ds_sum_vars = self.data[sum_vars].resample(time=tres).sum(
+                        skipna=True, keep_attrs=True)
+                    
+                # vars to average along time dimension
+                if 'Concentration' in self.datastream:
+                    mean_nan_vars = ['ND']
+                    mean_vars = ['n', 'dm_std']
+                    ds_mean_nan_vars = self.data[mean_nan_vars].fillna(0.).resample(time=tres).mean(
+                        skipna=True, keep_attrs=True)
+                    ds_mean_nan_vars = ds_mean_nan_vars.where(ds_mean_nan_vars != 0.)
+                    ds_mean_vars = self.data[mean_vars].resample(time=tres).mean(
+                        skipna=True, keep_attrs=True)
+                    
+                if self.datastream == 'Count':
+                    ds_downsampled = ds_sum_vars.transpose('size', 'time')
+                elif self.datastream == 'Concentration':
+                    ds_downsampled = xr.merge(
+                        [ds_mean_nan_vars, ds_mean_vars]
+                    ).transpose('size', 'time')
+                else: # merge averaged datasets from both datastreams
+                    ds_downsampled = xr.merge(
+                        [ds_sum_vars, ds_mean_nan_vars, ds_mean_vars]
+                    ).transpose('size', 'time')
+                return ds_downsampled
+            else:
+                return self.data
         else:
             if 'time' in list(self.data.coords): # for 1 Hz datasets
                 td_ds = pd.to_timedelta(
@@ -1196,7 +1230,234 @@ class Tamms(Instrument):
 
         return ds
 
-#
+# ====================================== #
+# CDP Distributions
+# ====================================== #
+class Cdp(Instrument):
+    """
+    A class to represent the CDP flown on the P-3 during the IMPACTS field campaign.
+    Inherits from Instrument()
+    
+    Parameters
+    ----------
+    filepath_count: str
+        File path to the CDP *.counts.cdp.1Hz data file
+    filepath_conc: str
+        File path to the CDP *.conc.cdp.1Hz data file
+    p3_object: impacts_tools.p3.P3() object or None
+        The optional P-3 Met-Nav object to automatically trim and average the TAMMS data
+    start_time: np.datetime64 or None
+        The initial time of interest eg. if looking at a single flight leg
+    end_time: np.datetime64 or None
+        The final time of interest eg. if looking at a single flight leg
+    tres: str
+        The time interval to average over (e.g., '5S' for 5 seconds)
+    """
+
+    def __init__(self, filepath_count, filepath_conc, date, p3_object=None, start_time=None, end_time=None, tres='1S'):
+        self.name = 'CDP'
+        if (filepath_count is not None) and (filepath_conc is not None):
+            self.datastream = 'Count and Concentration'
+        elif filepath_count is not None:
+            self.datastream = 'Count'
+        elif filepath_conc is not None:
+            self.datastream = 'Concentration'
+        # read the raw data
+        self.data = self.readfile(filepath_count, filepath_conc, date)
+        """
+        xarray.Dataset of TAMMS variables and attributes
+        Dimensions:
+            - size: The nth size bin in the CDP distribution
+            - time: np.array(np.datetime64[ns]) - The UTC time start of the N-s upsampled interval
+        Coordinates:
+            - bin_center (size): np.array(np.float64) - Size bin midpoint (um)
+            - bin_left (size): np.array(np.float64) - Size bin left endpoint (um)
+            - bin_right (size): np.array(np.float64) - Size bin right endpoint (um)
+            - bin_width (size): np.array(np.float64) - Size bin width (um)
+            - time (time): np.array(np.datetime64[ms]) - The UTC time start of the N-s upsampled interval
+        Variables:
+            - count (size, time): xarray.DataArray(float) - Drop count per size bin (#)
+            - ND (size, time): xarray.DataArray(float) - Number distribution function (DSD) (cm-4)
+            - n (size, time): xarray.DataArray(float) - Drop concentration per bin (cm-3)
+            - dm_std (size, time): xarray.DataArray(float) - Standard deviation of the mean drop radius (um)
+        """
+        
+        # trim dataset to P-3 time bounds or from specified start/end
+        if p3_object is not None:
+            self.data, tres = self.trim_to_p3(p3_object)
+        elif (start_time is not None) or (end_time is not None):
+            self.data = self.trim_time_bounds(start_time, end_time, tres)
+            
+        # downsample data if specified by the P-3 Met-Nav data or tres argument
+        self.data = self.downsample(tres)
+        
+    def readfile(self, filepath_count, filepath_conc, date):
+        """
+        Reads the TAMMS data file and unpacks the fields into an xarray.Dataset
+
+        Parameters
+        ----------
+        filepath_count: str
+            File path to the CDP *.counts.cdp.1Hz data file
+        filepath_conc: str
+            File path to the CDP *.conc.cdp.1Hz data file
+        date: str
+            Flight start date in YYYY-mm-dd format
+        p3_object: impacts_tools.p3.P3() or None
+            P-3 Met-Nav object to optionally contrain times and average data
+        start_time : np.datetime64 or None
+            The initial time of interest
+        end_time : np.datetime64 or None
+            The final time of interest
+        tres: str
+            The time interval to average over (e.g., '5S' for 5 seconds)
+
+        Returns
+        -------
+        data : xarray.Dataset
+            The unpacked dataset
+        """
+        # initialize dataset list to accomodate 2 CDP datastreams
+        ds_list = []
+        
+        # load the datasets if available
+        for (stream, file) in zip(['count', 'conc'], [filepath_count, filepath_conc]):
+            if file is not None: # parse file
+                # get header info following the NASA AMES format
+                header = parse_header(open(file, 'r'), date, stream='und')
+                
+                data_raw = np.genfromtxt(
+                    file, delimiter=None, skip_header=int(header['NLHEAD']),
+                    missing_values=header['VMISS'], usemask=True, filling_values=np.nan
+                )
+                
+                # construct dictionary of variable data and metadata
+                data = {}
+                if len(header['VNAME']) != len(header['VSCAL']):
+                    print(
+                        'ALL variables must be read in this type of file. '
+                        'Please check name_map to make sure it is the correct length.'
+                    )
+                for jj, unit in enumerate(header['VUNIT']):
+                    header['VUNIT'][jj] = unit.split(',')[0]
+
+                for jj, name in enumerate(header['VNAME']): # fix scaling and missing data flags for some vars
+                    header['VUNIT'][jj] = 'm/s'
+                    data[name] = np.array(data_raw[:, jj] * header['VSCAL'][jj])
+                    # turn missing values to nan
+                    data[name][data[name]==header['VMISS'][jj]] = np.nan
+
+                # compute time
+                time = np.array([
+                    np.datetime64(date) + np.timedelta64(int(data['time'][i]), 's')
+                    for i in range(len(data['time']))], dtype='datetime64[ms]'
+                )
+                
+                # populate data arrays common to both datastreams (size bin vars)
+                bin_edges = np.append(np.linspace(2., 14., 13), np.linspace(16., 50., 18))
+                bin_mid = xr.DataArray(
+                    data = bin_edges[:-1] + np.diff(bin_edges) / 2.,
+                    dims = 'size',
+                    attrs = dict(
+                        description='Drop size bin midpoint',
+                        units = 'um')
+                )
+                bin_min = xr.DataArray(
+                    data = bin_edges[:-1],
+                    dims = 'size',
+                    attrs = dict(
+                        description='Drop size bin left endpoint',
+                        units = 'um')
+                )
+                bin_max = xr.DataArray(
+                    data = bin_edges[1:],
+                    dims = 'size',
+                    attrs = dict(
+                        description='Drop size bin right endpoint',
+                        units = 'um')
+                )
+                bin_width = xr.DataArray(
+                    data = np.diff(bin_edges),
+                    dims = 'size',
+                    attrs = dict(
+                        description='Drop size bin width',
+                        units = 'um')
+                )
+                
+                # populate data arrays relevant to specific datastream
+                if stream == 'count':
+                    ct_array = np.zeros((30, data_raw.shape[0]))
+                    for channel in range(30): # parse each bin into a 2D array
+                        ct_array[channel, :] = np.atleast_2d(
+                            data[f'Number of counts in CDP channel {channel + 1}']
+                        )
+                    count = xr.DataArray(
+                        data = np.ma.masked_where(ct_array == 0., ct_array),
+                        dims = ['size', 'time'],
+                        attrs = dict(
+                            description='Drop count per size bin',
+                            units = '#')
+                    )
+                    data_vars = {'count': count}
+                elif stream == 'conc':
+                    ND_array = np.zeros((30, data_raw.shape[0]))
+                    for channel in range(30):
+                        ND_array[channel, :] = np.atleast_2d(
+                            data[f'CDP channel {channel + 1} concentration']
+                        )
+                    conc_data = np.nansum(ND_array, axis=0)
+                    ND = xr.DataArray(
+                        data = np.ma.masked_where(ND_array == 0., ND_array),
+                        dims = ['size', 'time'],
+                        attrs = dict(
+                            description='Number distribution function (DSD)',
+                            units = 'cm-4')
+                    )
+                    ND.data = (10.**4) * ND / bin_width # normalize by bin width
+                    conc = xr.DataArray(
+                        data = np.ma.masked_invalid(conc_data),
+                        dims = 'time',
+                        attrs = dict(
+                            description='Drop concentration per bin',
+                            units = 'cm-3')
+                    )
+                    dm_std = xr.DataArray(
+                        data = data['Cloud Droplet Probe\'s Standard Deviation of the Mean Radius'],
+                        dims = 'time',
+                        attrs = dict(
+                            description='Standard deviation of the mean drop radius',
+                            units = 'um')
+                    )
+                    data_vars = {'ND': ND, 'n': conc, 'dm_std': dm_std}
+                    
+                # put everything together into an XArray DataSet
+                ds = xr.Dataset(
+                    data_vars = data_vars,
+                    coords = {
+                        'bin_center': bin_mid,
+                        'bin_left': bin_min,
+                        'bin_right': bin_max,
+                        'bin_width': bin_width,
+                        'time': time
+                    },
+                    attrs = {
+                        'Experiment': 'IMPACTS',
+                        'Date': date,
+                        'Aircraft': 'P-3',
+                        'Data Contact': 'David Delene (david.delene@und.edu)',
+                        'Instrument PI': 'David Delene (david.delene@und.edu)',
+                        'Mission PI': 'Lynn McMurdie (lynnm@uw.edu)'
+                    }
+                )
+                ds_list.append(ds) # append to the dataset list
+        # merge datasets if applicable
+        if len(ds_list) == 1: # no need to merge datastreams
+            ds_merged = ds_list[0]
+        else:
+            ds_merged = xr.merge([ds_list[0], ds_list[1]])
+            
+        return ds_merged
+    
 class Und(Instrument):
     """
     A class to represent the UND instruments summary on the P-3 during the IMPACTS field campaign.
