@@ -845,8 +845,12 @@ class Instrument(ABC):
                 self.data['time'][1].values - self.data['time'][0].values
             )
             if pd.to_timedelta(tres) > td_ds: # upsampling not supported
-                sum_vars = ['count', 'count_habit', 'sv']
-                mean_nan_vars = ['ND', 'ND_habit']
+                if 'count_habit' in self.data.data_vars:
+                    sum_vars = ['count', 'count_habit', 'sv']
+                    mean_nan_vars = ['ND', 'ND_habit']
+                else:
+                    sum_vars = ['count', 'sv']
+                    mean_nan_vars = ['ND']
                 mean_vars = ['area_ratio', 'aspect_ratio']
                 if '2DS' in self.instruments:
                     mean_vars.append('active_time_2ds')
@@ -860,9 +864,14 @@ class Instrument(ABC):
                 ds_mean_nan_vars = ds_mean_nan_vars.where(ds_mean_nan_vars != 0.)
                 ds_mean_vars = self.data[mean_vars].resample(time=tres).mean(
                     skipna=True, keep_attrs=True)
-                ds_downsampled = xr.merge(
-                    [ds_sum_vars, ds_mean_nan_vars, ds_mean_vars]
-                ).transpose('habit', 'size', 'time')
+                if 'count_habit' in self.data.data_vars:
+                    ds_downsampled = xr.merge(
+                        [ds_sum_vars, ds_mean_nan_vars, ds_mean_vars]
+                    ).transpose('habit', 'size', 'time')
+                else:
+                    ds_downsampled = xr.merge(
+                        [ds_sum_vars, ds_mean_nan_vars, ds_mean_vars]
+                    ).transpose('size', 'time')
                 return ds_downsampled
             else:
                 return self.data
@@ -920,8 +929,11 @@ class Instrument(ABC):
                     
                 # vars to average along time dimension
                 if 'Concentration' in self.datastream:
+                    sum_vars2 = ['sv']
                     mean_nan_vars = ['ND']
-                    mean_vars = ['n', 'dm_std']
+                    mean_vars = ['n', 'lwc', 'dm', 'dmv', 're', 'dm_std']
+                    ds_sum_vars2 = self.data[sum_vars2].resample(time=tres).sum(
+                        skipna=True, keep_attrs=True)
                     ds_mean_nan_vars = self.data[mean_nan_vars].fillna(0.).resample(time=tres).mean(
                         skipna=True, keep_attrs=True)
                     ds_mean_nan_vars = ds_mean_nan_vars.where(ds_mean_nan_vars != 0.)
@@ -932,11 +944,11 @@ class Instrument(ABC):
                     ds_downsampled = ds_sum_vars.transpose('size', 'time')
                 elif self.datastream == 'Concentration':
                     ds_downsampled = xr.merge(
-                        [ds_mean_nan_vars, ds_mean_vars]
+                        [ds_sum_vars, ds_mean_nan_vars, ds_mean_vars]
                     ).transpose('size', 'time')
                 else: # merge averaged datasets from both datastreams
                     ds_downsampled = xr.merge(
-                        [ds_sum_vars, ds_mean_nan_vars, ds_mean_vars]
+                        [ds_sum_vars, ds_mean_nan_vars, ds_sum_vars2, ds_mean_vars]
                     ).transpose('size', 'time')
                 return ds_downsampled
             else:
@@ -1265,7 +1277,7 @@ class Cdp(Instrument):
         # read the raw data
         self.data = self.readfile(filepath_count, filepath_conc, date)
         """
-        xarray.Dataset of TAMMS variables and attributes
+        xarray.Dataset of CDP variables and attributes
         Dimensions:
             - size: The nth size bin in the CDP distribution
             - time: np.array(np.datetime64[ns]) - The UTC time start of the N-s upsampled interval
@@ -1278,8 +1290,13 @@ class Cdp(Instrument):
         Variables:
             - count (size, time): xarray.DataArray(float) - Drop count per size bin (#)
             - ND (size, time): xarray.DataArray(float) - Number distribution function (DSD) (cm-4)
-            - n (size, time): xarray.DataArray(float) - Drop concentration per bin (cm-3)
-            - dm_std (size, time): xarray.DataArray(float) - Standard deviation of the mean drop radius (um)
+            - sv (time): xarray.DataArray(float) - Sample volume (cm3)
+            - n (time): xarray.DataArray(float) - Number concentration (cm-3)
+            - lwc (time): xarray.DataArray(float) - Liquid water content (g m-3)
+            - dm (time): xarray.DataArray(float) - Mean droplet diameter (um)
+            - dmv (time): xarray.DataArray(float) - Mean droplet volume diameter (um)
+            - re (time): xarray.DataArray(float) - Effective droplet radius (cm-3)
+            - dm_std (time): xarray.DataArray(float) - Standard deviation of the mean drop radius (um)
         """
         
         # trim dataset to P-3 time bounds or from specified start/end
@@ -1293,7 +1310,7 @@ class Cdp(Instrument):
         
     def readfile(self, filepath_count, filepath_conc, date):
         """
-        Reads the TAMMS data file and unpacks the fields into an xarray.Dataset
+        Reads the CDP data file and unpacks the fields into an xarray.Dataset
 
         Parameters
         ----------
@@ -1405,7 +1422,6 @@ class Cdp(Instrument):
                         ND_array[channel, :] = np.atleast_2d(
                             data[f'CDP channel {channel + 1} concentration']
                         )
-                    conc_data = np.nansum(ND_array, axis=0)
                     ND = xr.DataArray(
                         data = np.ma.masked_where(ND_array == 0., ND_array),
                         dims = ['size', 'time'],
@@ -1414,12 +1430,47 @@ class Cdp(Instrument):
                             units = 'cm-4')
                     )
                     ND.data = (10.**4) * ND / bin_width # normalize by bin width
-                    conc = xr.DataArray(
-                        data = np.ma.masked_invalid(conc_data),
+                    sv = xr.DataArray(
+                        data = data['Cloud Droplet Probe\'s Sample Volume'],
                         dims = 'time',
                         attrs = dict(
-                            description='Drop concentration per bin',
+                            description='Sample volume',
+                            units = 'cm3')
+                    )
+                    conc = xr.DataArray(
+                        data = data['Number Concentration of Droplets Based on the Cloud Droplet Probe'],
+                        dims = 'time',
+                        attrs = dict(
+                            description='Number concentration based on the CDP',
                             units = 'cm-3')
+                    )
+                    lwc = xr.DataArray(
+                        data = data['Liquid Water Content Based on the Cloud Droplet Probe'],
+                        dims = 'time',
+                        attrs = dict(
+                            description='Liquid water content',
+                            units = 'g m-3')
+                    )
+                    dm = xr.DataArray(
+                        data = data['Cloud Droplet Probe\'s Mean Droplet Diameter'],
+                        dims = 'time',
+                        attrs = dict(
+                            description='Mean droplet diameter',
+                            units = 'um')
+                    )
+                    dmv = xr.DataArray(
+                        data = data['Cloud Droplet Probe\'s Mean Droplet Volume Diameter'],
+                        dims = 'time',
+                        attrs = dict(
+                            description='Mean droplet volume diameter',
+                            units = 'um')
+                    )
+                    re = xr.DataArray(
+                        data = data['Cloud Droplet Probe\'s Effective Droplet Radius'],
+                        dims = 'time',
+                        attrs = dict(
+                            description='Effective droplet radius',
+                            units = 'um')
                     )
                     dm_std = xr.DataArray(
                         data = data['Cloud Droplet Probe\'s Standard Deviation of the Mean Radius'],
@@ -1428,7 +1479,10 @@ class Cdp(Instrument):
                             description='Standard deviation of the mean drop radius',
                             units = 'um')
                     )
-                    data_vars = {'ND': ND, 'n': conc, 'dm_std': dm_std}
+                    data_vars = {
+                        'ND': ND, 'sv': sv, 'n': conc, 'lwc': lwc,
+                        'dm': dm, 'dmv': dmv, 're': re, 'dm_std': dm_std
+                    }
                     
                 # put everything together into an XArray DataSet
                 ds = xr.Dataset(
@@ -2240,13 +2294,17 @@ class Psd(Instrument):
                 )
                 
                 # trim based on probe size limits
-                if probe == '2ds':
+                if len(binlims)==2:
                     ds = ds.sel(
                         size=(ds.bin_left >= binlims[0]) & (ds.bin_left < binlims[1])
                     )
+                elif probe == '2ds':
+                    ds = ds.sel(
+                        size=(ds.bin_left >= binlims[0]) & (ds.bin_left < binlims[-2])
+                    )
                 else:
                     ds = ds.sel(
-                        size=(ds.bin_left >= binlims[-2]) & (ds.bin_left < binlims[-1])
+                        size=(ds.bin_left >= binlims[1]) & (ds.bin_left < binlims[-1])
                     )
                 ds_list.append(ds)
                 
@@ -2254,13 +2312,16 @@ class Psd(Instrument):
         if len(ds_list) == 1: # no need to merge PSDs
             ds_merged = ds_list[0].drop_vars('active_time')
         else:
-            ds_merged = xr.concat(
-                [ds_list[0].drop_vars('active_time'),
-                 ds_list[1].drop_vars('active_time')
-                ], dim='size'
-            ) # concatenate, drop active_time for now
-            #ds_merged['active_time_2ds'] = ds_list[0]['active_time']
-            #ds_merged['active_time_hvps'] = ds_list[1]['active_time']
+            if len(binlims) < 4:
+                ds_merged = xr.concat(
+                    [ds_list[0].drop_vars('active_time'),
+                     ds_list[1].drop_vars('active_time')
+                    ], dim='size'
+                ) # concatenate, drop active_time for now
+            else: # blend probes in transition region
+                ds_merged = self.weight_psd(
+                    ds_list[0], ds_list[1], ovld_thresh, binlims
+                )
 
         # mask periods when dead time exceeds the specified threshold (optional)
         if (ovld_thresh is not None) and (len(ds_list) > 0):
@@ -2447,7 +2508,11 @@ class Psd(Instrument):
                 )
                 
                 # trim based on probe size limits
-                if (probe == '2ds') and (filepath_2ds != filepath_hvps):
+                if len(binlims) == 2:
+                    ds = ds.sel(
+                        size=(ds.bin_left >= binlims[0]) & (ds.bin_left < binlims[1])
+                    )
+                elif (probe == '2ds') and (filepath_2ds != filepath_hvps):
                     ds = ds.sel(
                         size=(ds.bin_left >= binlims[0]) & (ds.bin_left < binlims[-2])
                     )
@@ -2501,14 +2566,12 @@ class Psd(Instrument):
         return ds_merged
     
     def weight_psd(self, psd_2ds, psd_hvps, qc_thresh, binlims):
-        print(f'Weighting 2D-S and HVPS PSDs in {binlims[1]}-{binlims[2]} mm range')
-
         bin_mid = xr.DataArray(
             data = np.append(
                 psd_2ds['bin_center'].values,
                 psd_hvps['bin_center'].values[
                     psd_hvps['bin_center'] >
-                    psd_2ds['bin_center'].values[-1]
+                    psd_2ds['bin_center'].values[-1] + 0.001
                 ]
             ),
             dims = 'size',
@@ -2519,7 +2582,7 @@ class Psd(Instrument):
                 psd_2ds['bin_left'].values,
                 psd_hvps['bin_left'].values[
                     psd_hvps['bin_center'] >
-                    psd_2ds['bin_center'].values[-1]
+                    psd_2ds['bin_center'].values[-1] + 0.001
                 ]
             ),
             dims = 'size',
@@ -2530,7 +2593,7 @@ class Psd(Instrument):
                 psd_2ds['bin_right'].values,
                 psd_hvps['bin_right'].values[
                     psd_hvps['bin_center'] >
-                    psd_2ds['bin_center'].values[-1]
+                    psd_2ds['bin_center'].values[-1] + 0.001
                 ]
             ),
             dims = 'size',
@@ -2555,7 +2618,7 @@ class Psd(Instrument):
             )
         )
         weight_2ds = xr.DataArray(
-            data = 1 - weight_hvps.values,
+            data = 1. - weight_hvps.values,
             dims = 'size',
             attrs = dict(
                 description = '2D-S weight per bin for the composite PSD',
@@ -2564,21 +2627,21 @@ class Psd(Instrument):
         )
 
         # interpolate psds (nearest neighbor) to match new bin arrangement
+        if self.name == 'UIOOPS PSD':
+            qc_var = 'active_time'
+        elif self.name == 'SODA PSD':
+            qc_var = 'qc_flag'
         psd_interp_2ds = psd_2ds.copy(deep=True)
-        psd_interp_2ds = psd_2ds.swap_dims({'size': 'bin_center'}).drop_vars(
-            ['count', 'sv']
-        )
+        psd_interp_2ds = psd_2ds.swap_dims({'size': 'bin_center'})
         if qc_thresh is not None:
-            psd_interp_2ds.drop_vars('qc_flag')
+            psd_interp_2ds.drop_vars(qc_var)
         psd_interp_2ds = weight_2ds * psd_interp_2ds.interp(
             bin_center=bin_mid, method='nearest'
         )
         psd_interp_hvps = psd_hvps.copy(deep=True)
-        psd_interp_hvps = psd_hvps.swap_dims({'size': 'bin_center'}).drop_vars(
-            ['count', 'sv']
-        )
+        psd_interp_hvps = psd_hvps.swap_dims({'size': 'bin_center'})
         if qc_thresh is not None:
-            psd_interp_hvps.drop_vars('qc_flag')
+            psd_interp_hvps.drop_vars(qc_var)
         psd_interp_hvps = weight_hvps * psd_interp_hvps.interp(
             bin_center=bin_mid, method='nearest'
         )
@@ -2588,6 +2651,34 @@ class Psd(Instrument):
         dD_2ds[np.isnan(dD_2ds)] = np.nan # dummy value for bins outside probe range
         dD_hvps = psd_interp_hvps['bin_width'].values
         dD_hvps[np.isnan(dD_hvps)] = np.nan # dummy value for bins outside probe range
+        
+        # normalize particle counts based on new bin widths
+        psd_interp_2ds['count'] = (dD / dD_2ds) * psd_interp_2ds['count']
+        psd_interp_2ds['count'].values[np.isnan(psd_interp_2ds['count'])] = 0.
+        psd_interp_hvps['count'] = (dD / dD_hvps) * psd_interp_hvps['count']
+        psd_interp_hvps['count'].values[np.isnan(psd_interp_hvps['count'])] = 0.
+        count_temp = psd_interp_2ds['count'].values + psd_interp_hvps['count'].values
+        count = xr.DataArray(
+            data = count_temp,
+            dims = ['size', 'time'],
+            coords = dict(
+                bin_center=bin_mid, bin_left=bin_min, bin_right=bin_max,
+                bin_width=dD, time=psd_interp_2ds.time),
+            attrs = psd_2ds['count'].attrs
+        )
+        
+        # compute weighted mean of sample volume
+        psd_interp_2ds['sv'].values[np.isnan(psd_interp_2ds['sv'])] = 0.
+        psd_interp_hvps['sv'].values[np.isnan(psd_interp_hvps['sv'])] = 0.
+        sv_temp = psd_interp_2ds['sv'].values + psd_interp_hvps['sv'].values
+        sv = xr.DataArray(
+            data = sv_temp,
+            dims = ['size', 'time'],
+            coords = dict(
+                bin_center=bin_mid, bin_left=bin_min, bin_right=bin_max,
+                bin_width=dD, time=psd_interp_2ds.time),
+            attrs = psd_2ds['sv'].attrs
+        )
 
         # normalize N(D) based on new bin widths
         psd_interp_2ds['ND'] = (dD / dD_2ds) * psd_interp_2ds['ND']
@@ -2632,6 +2723,8 @@ class Psd(Instrument):
         # make the dataset object
         psd_merged = xr.Dataset(
             data_vars={
+                'count': count,
+                'sv': sv,
                 'ND': ND,
                 'area_ratio': ar,
                 'aspect_ratio': asr
@@ -3266,10 +3359,14 @@ class Psd(Instrument):
                 ds = ds.drop_vars(
                     ['N0_bf', 'mu_bf', 'lambda_bf', 'N0_hy', 'mu_hy', 'lambda_hy']
                 )
-        
-        ds_merged = xr.merge(
-            [self.data, ds], combine_attrs='drop_conflicts'
-        ).transpose('habit', 'size', 'time')
+        if 'habit' in list(self.data.dims):
+            ds_merged = xr.merge(
+                [self.data, ds], combine_attrs='drop_conflicts'
+            ).transpose('habit', 'size', 'time')
+        else:
+            ds_merged = xr.merge(
+                [self.data, ds], combine_attrs='drop_conflicts'
+            ).transpose('size', 'time')
         
         return ds_merged
     

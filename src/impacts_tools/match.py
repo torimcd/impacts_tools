@@ -999,11 +999,15 @@ class Match(ABC):
                 'vel_ku': vel2
             }
         else:
+            if self.name == 'Matched CRS':
+                freq = 'w'
+            elif self.name == 'Matched EXRAD':
+                freq = 'x'
             data_vars = {
                 'dist_diff': ddiff,
                 'time_diff': tdiff,
-                'dbz': dbz,
-                'vel': vel
+                f'dbz_{freq}': dbz,
+                f'vel_{freq}': vel
             }
             
         # create dataset
@@ -1185,7 +1189,7 @@ class MatchLidar(ABC):
 # ====================================== #
 class Hiwrap(Match):
     """
-    A class to represent the TAMMS flown on the P-3 during the IMPACTS field campaign.
+    A class to represent the CPL data matched to the P-3 position during the IMPACTS field campaign.
     Inherits from Instrument()
     
     Parameters
@@ -1212,6 +1216,70 @@ class Hiwrap(Match):
             self, radar_object, p3_object, query_k=1, dist_thresh=4000.,
             time_thresh=None, qc=False, ref_coords=None, n_workers=1):
         self.name = 'Matched HIWRAP'
+        
+        # get P-3 alt bounds
+        alt_minP3 = np.nanmin(p3_object['alt_gps'].values)
+        alt_maxP3 = np.nanmax(p3_object['alt_gps'].values)
+        alt_boundsP3 = (alt_minP3, alt_maxP3)
+        
+        # qc radar data (threshold by Z gradient and SW if specified)
+        radar_qc = self.qc_radar(radar_object, alt_boundsP3, qc)
+        
+        # read the raw data
+        self.data = self.match_radar(
+            radar_qc, p3_object, query_k, dist_thresh, time_thresh,
+            ref_coords, n_workers
+        )
+        """
+        xarray.Dataset of matched HIWRAP reflectivity and attributes
+        Dimensions:
+            - time: np.array(np.datetime64[s]) - The UTC time start of the N-s upsampled interval
+        Coordinates:
+            - time (time): np.array(np.datetime64[s]) - The UTC time start of the N-s upsampled interval
+            - distance (time): xarray.DataArray(float) - Along track ER-2 distance (m)
+            - lat (time): xarray.DataArray(float) - Latitude (degrees)
+            - lon (time): xarray.DataArray(float) - Longitude (degrees)
+        Variables:
+            - alt_gps (time) : xarray.DataArray(float) - P-3 GPS altitude (m above mean sea level)
+            - temp (time) : xarray.DataArray(float) - Static (ambient) air temperature (deg C)
+            - dwpt (time) : xarray.DataArray(float) - Dew point temperature (deg C)
+            - z_ku (time) : xarray.DataArray(float) - Matched Ku-band reflectivity (dBZ)
+            - z_ka (time) : xarray.DataArray(float) - Matched Ka-band reflectivity (dBZ)
+            - dfr_ku_ka (time) : xarray.DataArray(float) - Matched dual frequency ratio (dB)
+        """
+        
+# ====================================== #
+# CRS
+# ====================================== #
+class Crs(Match):
+    """
+    A class to represent the CRS data matched to the P-3 position during the IMPACTS field campaign.
+    Inherits from Instrument()
+    
+    Parameters
+    ----------
+    crs_object: impacts_tools.er2.Crs(Radar) object
+        The time-trimmed CRS radar object
+    p3_object: impacts_tools.p3.P3() object
+        The time-trimmed P-3 Met-Nav object
+    query_k: int
+        Number of radar gates considered in the average (1 - nearest neighbor)
+    dist_thresh: float
+        Maximum distance (m) allowed in the kdTree search
+    time_thresh: None or float
+        Maximum time offset (s) between ER-2 and P-3 allowed for matched instance
+    qc: bool
+        True - remove gates with high dbz gradient, no dbz, low spw
+        False - only remove gates with no dbz
+    ref_coords: None or 2-element tuple of float
+        Reference lat, lon pair (deg) to project ER-2 and P-3 points to cartesian grid.
+        None defaults to first lat, lon point in P-3 object
+    """
+    
+    def __init__(
+            self, radar_object, p3_object, query_k=1, dist_thresh=4000.,
+            time_thresh=None, qc=False, ref_coords=None, n_workers=1):
+        self.name = 'Matched CRS'
         
         # get P-3 alt bounds
         alt_minP3 = np.nanmin(p3_object['alt_gps'].values)
