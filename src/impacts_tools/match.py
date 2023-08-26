@@ -12,6 +12,8 @@ from scipy.spatial import cKDTree
 from scipy.ndimage import generic_filter
 from abc import ABC, abstractmethod
 from scipy.ndimage import gaussian_filter
+import warnings
+warnings.filterwarnings('ignore', category=RuntimeWarning, message='Degrees of freedom')
 
 class Match(ABC):
     """
@@ -32,59 +34,103 @@ class Match(ABC):
         self.name = None
         self.data = None
         
-    def qc_radar(self, radar_object, qc=False):
+    def qc_radar(self, radar_dataset, alt_bounds_p3, qc=False):
         """
         xarray.Dataset (1-D) of QC'd radar data, with bad values removed
+        
+        Parameters
+        ----------
+        radar_dataset: impacts_tools.er2.XXX(Radar).Dataset object
+        alt_bounds_p3: tuple
+            Minimum and maximum P-3 altitude (m) for flight segment.
+        qc: bool
+            Additionally applies a filter on suspected P-3 skinpaints
         """
         if (self.name == 'Matched CRS') or (self.name == 'Matched EXRAD'):
-            # build mask
-            mask = np.zeros(radar_object['dbz'].shape, dtype=bool)
+            # mask based on alt relative to P-3 (+/- 250 m) and ground
+            ds_qc = radar_dataset.copy()
+            mask = np.ones(ds_qc.height.shape, dtype=bool)
             mask[
-                (np.isnan(radar_object['dbz'].values)) |
-                (radar_object['height'].values < 500.)] = True
-            
-            if qc: # additional qc based on Z variability and SPW
-                # compute IQR of Z using 9x3 (vertical x horizontal) moving window
-                # window should reflect similar distance in horizontal and vertical
-                iqr_dbz = generic_filter(
-                    radar_object['dbz'].values, iqr,
-                    size=(9,3), mode='nearest'
+                (ds_qc['height'].values >= alt_bounds_p3[0] - 250.) &
+                (ds_qc['height'].values <= alt_bounds_p3[1] + 250.) &
+                (~np.isnan(ds_qc['dbz'].values)) &
+                (~np.isnan(ds_qc['vel'].values)) &
+                (ds_qc['height'].values >= 500.)] = False
+            mask = xr.DataArray(
+                data = mask,
+                dims = ['range', 'time'],
+                coords = dict(
+                    range = ds_qc.range,
+                    time = ds_qc.time
                 )
+            )
+            ds_qc = ds_qc.where(~mask) # set nan outside of these alts
+            
+            if qc: # additional qc based on dbz variability and spectrum width
+                # dbz stdev using rolling window
+                # window size reflects similar horiz (300 m) and vert (270 m)
+                dbz_std = radar_dataset.dbz.rolling(
+                    range=9, time=3, center=True
+                ).std(skipna=True)
 
-                # compute 5th percentile of spectrum width
-                p05_spw = np.nanpercentile(radar_object['width'].values, 5)
+                # compute top percentile of spectrum width
+                spw_p01 = np.nanpercentile(ds_qc.width.values, 1)
                 
-                # additional conditions for mask
-                mask[(iqr_dbz > 5.) & (radar_object['width'].values < p05_spw)] = True
+                # additional masking based on these thresholds
+                ds_qc = ds_qc.where(
+                    (dbz_std <= 5.) & (ds_qc.width > spw_p01)
+                )
         elif self.name == 'Matched HIWRAP':
-            # build mask
-            mask = np.zeros(radar_object['dbz_ku'].shape, dtype=bool)
+            # mask based on alt relative to P-3 (+/- 250 m) and ground
+            ds_qc = radar_dataset.copy()
+            mask = np.ones(ds_qc.height.shape, dtype=bool)
             mask[
-                (np.isnan(radar_object['dbz_ku'].values)) |
-                (np.isnan(radar_object['dbz_ka'].values)) |
-                (radar_object['height'].values < 500.)] = True
+                (ds_qc['height'].values >= alt_bounds_p3[0] - 250.) &
+                (ds_qc['height'].values <= alt_bounds_p3[1] + 250.) &
+                (~np.isnan(ds_qc['dbz_ku'].values)) &
+                (~np.isnan(ds_qc['dbz_ka'].values)) &
+                (~np.isnan(ds_qc['vel_ku'].values)) &
+                (~np.isnan(ds_qc['vel_ka'].values)) &
+                (ds_qc['height'].values >= 500.)] = False
+            mask = xr.DataArray(
+                data = mask,
+                dims = ['range', 'time'],
+                coords = dict(
+                    range = ds_qc.range,
+                    time = ds_qc.time
+                )
+            )
+            ds_qc = ds_qc.where(~mask) # set nan outside of these alts
             
-            if qc: # additional qc based on Z variability and SPW
-                # compute IQR of Z using 9x3 (vertical x horizontal) moving window
-                # window should reflect similar distance in horizontal and vertical
-                iqr_dbz_ka = generic_filter(
-                    radar_object['dbz_ka'].values, iqr,
-                    size=(9,3), mode='nearest'
-                )
-                iqr_dbz_ku = generic_filter(
-                    radar_object['dbz_ku'].values, iqr,
-                    size=(9,3), mode='nearest'
-                )
+            if qc: # additional qc based on dbz variability and spectrum width
+                # dbz stdev using rolling window
+                # window size reflects similar horiz (300 m) and vert (270 m)
+                dbz_ku_std = radar_dataset.dbz_ku.rolling(
+                    range=9, time=3, center=True
+                ).std(skipna=True)
+                dbz_ka_std = radar_dataset.dbz_ka.rolling(
+                    range=9, time=3, center=True
+                ).std(skipna=True)
 
-                # compute 5th percentile of spectrum width
-                p05_spw_ka = np.nanpercentile(radar_object['width_ka'].values, 5)
-                p05_spw_ku = np.nanpercentile(radar_object['width_ku'].values, 5)
+                # compute top percentile of spectrum width
+                spw_ku_p01 = np.nanpercentile(ds_qc.width_ku.values, 1)
+                spw_ka_p01 = np.nanpercentile(ds_qc.width_ka.values, 1)
                 
-                # additional conditions for mask
-                mask[(iqr_dbz_ka > 5.) & (radar_object['width_ka'].values < p05_spw_ka)] = True
-                mask[(iqr_dbz_ku > 5.) & (radar_object['width_ku'].values < p05_spw_ku)] = True
+                # additional masking based on these thresholds (run twice)
+                ds_qc = ds_qc.where(
+                    (dbz_ku_std <= 5.) & (ds_qc.width_ku > spw_ku_p01)
+                )
+                ds_qc = ds_qc.where(
+                    (dbz_ka_std <= 5.) & (ds_qc.width_ka > spw_ka_p01)
+                )
         
         # build 1D dataset with select radar vars
+        if self.name == 'Matched HIWRAP':
+            mask = (
+                np.isnan(ds_qc.dbz_ku.values) + np.isnan(ds_qc.dbz_ka.values)
+            )
+        else:
+            mask = np.isnan(ds_qc.dbz.values)
         gate_idx = np.arange(mask.shape[0] * mask.shape[1])
         mask_flat = xr.DataArray(
             data = mask.flatten(),
@@ -92,68 +138,96 @@ class Match(ABC):
         )
         time_flat = xr.DataArray(
             data = np.tile(
-                np.atleast_2d(radar_object['time'].values),
-                (radar_object.dims['range'], 1)).flatten(),
+                np.atleast_2d(radar_dataset['time'].values),
+                (radar_dataset.dims['range'], 1)).flatten(),
             dims = 'gate_idx',
-            attrs = radar_object['time'].attrs
+            attrs = radar_dataset['time'].attrs
         )
         hght = xr.DataArray(
-            data =  radar_object['height'].values.flatten(),
+            data =  radar_dataset['height'].values.flatten(),
             dims = 'gate_idx',
-            attrs = radar_object['lat'].attrs
+            attrs = radar_dataset['lat'].attrs
         )
         dist_raw = (
-            xr.DataArray(np.ones(radar_object.dims['range']), dims=('range')) *
-            radar_object['distance']).values.flatten()
+            xr.DataArray(np.ones(radar_dataset.dims['range']), dims=('range')) *
+            radar_dataset['distance']).values.flatten()
         dist = xr.DataArray(
             data =  dist_raw - np.min(dist_raw),
             dims = 'gate_idx',
-            attrs = radar_object['distance'].attrs
+            attrs = radar_dataset['distance'].attrs
         )
         lat = xr.DataArray(
             data =  (
-                xr.DataArray(np.ones(radar_object.dims['range']), dims=('range')) *
-                radar_object['lat']).values.flatten(),
+                xr.DataArray(np.ones(radar_dataset.dims['range']), dims=('range')) *
+                radar_dataset['lat']).values.flatten(),
             dims = 'gate_idx',
-            attrs = radar_object['lat'].attrs
+            attrs = radar_dataset['lat'].attrs
         )
         lon = xr.DataArray(
             data =  (
-                xr.DataArray(np.ones(radar_object.dims['range']), dims=('range')) *
-                radar_object['lon']).values.flatten(),
+                xr.DataArray(np.ones(radar_dataset.dims['range']), dims=('range')) *
+                radar_dataset['lon']).values.flatten(),
             dims = 'gate_idx',
-            attrs = radar_object['lon'].attrs
+            attrs = radar_dataset['lon'].attrs
         )
         if (self.name == 'Matched CRS') or (self.name == 'Matched EXRAD'):
             dbz = xr.DataArray(
                 data =  (
-                    xr.DataArray(np.ones(radar_object.dims['range']), dims=('range')) *
-                    radar_object['dbz']).values.flatten(),
+                    xr.DataArray(np.ones(radar_dataset.dims['range']), dims=('range')) *
+                    radar_dataset['dbz']).values.flatten(),
                 dims = 'gate_idx',
                 coords = dict(
                     time = time_flat, height = hght, distance = dist,
                     lat = lat, lon = lon),
-                attrs = radar_object['dbz'].attrs
+                attrs = radar_dataset['dbz'].attrs
             )
-            data_vars = {'dbz': dbz}
+            vel = xr.DataArray(
+                data =  (
+                    xr.DataArray(np.ones(radar_dataset.dims['range']), dims=('range')) *
+                    radar_dataset['vel']).values.flatten(),
+                dims = 'gate_idx',
+                coords = dict(
+                    time = time_flat, height = hght, distance = dist,
+                    lat = lat, lon = lon),
+                attrs = radar_dataset['vel'].attrs
+            )
+            data_vars = {'dbz': dbz, 'vel': vel}
         elif self.name == 'Matched HIWRAP':
             dbz_ka = xr.DataArray(
-                data =  radar_object['dbz_ka'].values.flatten(),
+                data =  radar_dataset['dbz_ka'].values.flatten(),
                 dims = 'gate_idx',
                 coords = dict(
                     time = time_flat, height = hght, distance = dist,
                     lat = lat, lon = lon),
-                attrs = radar_object['dbz_ka'].attrs
+                attrs = radar_dataset['dbz_ka'].attrs
             )
             dbz_ku = xr.DataArray(
-                data =  radar_object['dbz_ku'].values.flatten(),
+                data =  radar_dataset['dbz_ku'].values.flatten(),
                 dims = 'gate_idx',
                 coords = dict(
                     time = time_flat, height = hght, distance = dist,
                     lat = lat, lon = lon),
-                attrs = radar_object['dbz_ku'].attrs
+                attrs = radar_dataset['dbz_ku'].attrs
             )
-            data_vars = {'dbz_ka': dbz_ka, 'dbz_ku': dbz_ku}
+            vel_ka = xr.DataArray(
+                data =  radar_dataset['vel_ka'].values.flatten(),
+                dims = 'gate_idx',
+                coords = dict(
+                    time = time_flat, height = hght, distance = dist,
+                    lat = lat, lon = lon),
+                attrs = radar_dataset['vel_ka'].attrs
+            )
+            vel_ku = xr.DataArray(
+                data =  radar_dataset['vel_ku'].values.flatten(),
+                dims = 'gate_idx',
+                coords = dict(
+                    time = time_flat, height = hght, distance = dist,
+                    lat = lat, lon = lon),
+                attrs = radar_dataset['vel_ku'].attrs
+            )
+            data_vars = {
+                'dbz_ka': dbz_ka, 'dbz_ku': dbz_ku, 'vel_ka': vel_ka, 'vel_ku': vel_ku
+            }
         ds = xr.Dataset(
             data_vars = data_vars,
             coords = {
@@ -170,7 +244,7 @@ class Match(ABC):
         
         return ds
     
-    def qc_lidar(self, lidar_dataset, alt_bounds_p3, qc):
+    def qc_lidar(self, lidar_dataset, alt_bounds_p3, qc=False):
         """
         xarray.Dataset (1-D) of QC'd lidar data, with bad values removed
         
@@ -197,16 +271,16 @@ class Match(ABC):
                         np.isfinite(temp_datafiltered)
                     )
             mask[
-                (lidar_dataset['height'].values >= alt_bounds_p3[0] - 150.) &
-                (lidar_dataset['height'].values <= alt_bounds_p3[1] + 150.) &
+                (lidar_dataset['height'].values >= alt_bounds_p3[0] - 250.) &
+                (lidar_dataset['height'].values <= alt_bounds_p3[1] + 250.) &
                 (lidar_dataset['atb_1064'].values >= 1.e-3) &
                 (lidar_dataset['atb_532'].values >= 1.e-3) &
                 (lidar_dataset['atb_355'].values >= 1.e-3) &
                 (lidar_dataset['height'].values >= 500.)] = False
         elif self.name == 'Matched CPL Profiles': # L2 profile data
             mask[
-                (lidar_dataset['height'].values >= alt_bounds_p3[0] - 150.) &
-                (lidar_dataset['height'].values <= alt_bounds_p3[1] + 150.) &
+                (lidar_dataset['height'].values >= alt_bounds_p3[0] - 250.) &
+                (lidar_dataset['height'].values <= alt_bounds_p3[1] + 250.) &
                 (~np.isnan(lidar_dataset['ext_1064'].values)) &
                 (~np.isnan(lidar_dataset['ext_532'].values)) &
                 (~np.isnan(lidar_dataset['ext_355'].values)) &
@@ -517,7 +591,7 @@ class Match(ABC):
         ) # matched lidar time doesn't change when it should always increase
         mask_altdiff = np.abs(
             alt_lidar_matched.data - p3_object['alt_gps'].values
-        ) > 150. # mean gate alt > 200 m from P-3 alt
+        ) > 250. # mean gate alt > 250 m from P-3 alt
         mask_tdiff = np.abs(tdiff_matched) > time_thresh # time offset too big
         if self.name == 'Matched CPL ATB':
             mask_final = (
@@ -645,7 +719,7 @@ class Match(ABC):
         
         return ds_merged
     
-    def matchdata(
+    def match_radar(
             self, radar_qc, p3_object, query_k, dist_thresh, time_thresh,
             ref_coords, n_workers):
         # define map proj to calculate cartesian distances
@@ -687,7 +761,10 @@ class Match(ABC):
             dbz_matched = np.ma.masked_where(
                 prind1d == 0, radar_qc['dbz'].values[prind1d]
             )
-            key_dbz = 'dbz'
+            vel_matched = np.ma.masked_where(
+                prind1d == 0, radar_qc['vel'].values[prind1d]
+            )
+            key_dbz, key_vel = ('dbz', 'vel')
         elif self.name == 'Matched HIWRAP':
             dbz_matched = np.ma.masked_where(
                 prind1d == 0, radar_qc['dbz_ka'].values[prind1d]
@@ -695,10 +772,17 @@ class Match(ABC):
             dbz2_matched = np.ma.masked_where(
                 prind1d == 0, radar_qc['dbz_ku'].values[prind1d]
             )
-            key_dbz = 'dbz_ka'
+            vel_matched = np.ma.masked_where(
+                prind1d == 0, radar_qc['vel_ka'].values[prind1d]
+            )
+            vel2_matched = np.ma.masked_where(
+                prind1d == 0, radar_qc['vel_ku'].values[prind1d]
+            )
+            key_dbz, key_vel = ('dbz_ka', 'vel_ka')
         
         # Perform the matching routine
         if query_k == 1: # nearest neighbor
+            print('Nearest neighbor not supported at this time')
             return
         else: # more than closest gate considered, use Barnes-weighted mean
             # dbz
@@ -729,8 +813,17 @@ class Match(ABC):
             dbz_matched = np.ma.masked_where(
                 dbz_stdev > 5., dbz_matched).filled(np.nan) # mask suspected skin paint artifact
             
-            # dbz2 (HIWRAP Ku)
+            # vel
+            W_d_k2 = np.ma.masked_where(
+                np.ma.getmask(vel_matched), W_d_k.copy()
+            ) # mask weights where vel is masked
+            w1 = np.ma.sum(W_d_k2 * vel_matched, axis=1) # weighted sum of vel per N-s period
+            w2 = np.ma.sum(W_d_k2, axis=1) # sum of weights per N-s period
+            vel_matched = w1 / w2 # flatten matched vel
+            
+            # dbz2 and vel2 (HIWRAP Ku)
             if self.name == 'Matched HIWRAP':
+                # dbz2
                 W_d_k2 = np.ma.masked_where(
                     np.ma.getmask(dbz2_matched), W_d_k.copy()
                 ) # mask weights where dbz is masked
@@ -754,6 +847,14 @@ class Match(ABC):
                 dbz2_stdev = np.ma.masked_invalid(dbz2_stdev)
                 dbz2_matched = np.ma.masked_where(
                     dbz2_stdev > 5., dbz2_matched).filled(np.nan) # mask suspected skin paint artifact
+                
+                # vel2
+                W_d_k2 = np.ma.masked_where(
+                    np.ma.getmask(vel2_matched), W_d_k.copy()
+                ) # mask weights where vel is masked
+                w1 = np.ma.sum(W_d_k2 * vel2_matched, axis=1) # weighted sum of vel per N-s period
+                w2 = np.ma.sum(W_d_k2, axis=1) # sum of weights per N-s period
+                vel2_matched = w1 / w2 # flatten matched vel
                 
             # time
             time_2d = np.tile(
@@ -795,22 +896,28 @@ class Match(ABC):
                 nomdist[i] = radar_qc['distance'].values[
                     np.argmin(np.abs(radar_qc['time'].values - time_radar_matched[i]))
                 ]
+        
         # mask data
+        mask_timedelta = np.append(
+            np.array([False]),
+            np.array(np.diff(time_radar_matched) < np.timedelta64(500, 'ms'), dtype=bool)
+        ) # matched radar time doesn't change when it should always increase
         mask_altdiff = np.abs(
             alt_radar_matched.data - p3_object['alt_gps'].values
-        ) > 100. # mean gate alt > 100 m from P-3 alt
+        ) > 250. # mean gate alt > 250 m from P-3 alt
         mask_tdiff = np.abs(tdiff_matched) > time_thresh # time offset too big
         if self.name == 'Matched HIWRAP':
             mask_final = (
                 np.isnan(dbz_matched) + np.isnan(dbz2_matched) +
-                mask_altdiff + mask_tdiff.data
+                mask_tdiff.data + mask_altdiff + mask_timedelta
             )
         else:
-            mask_final = np.isnan(dbz_matched) + mask_altdiff + mask_tdiff.data
-            
+            mask_final = (
+                np.isnan(dbz_matched) + mask_tdiff.data + mask_altdiff + mask_timedelta
+            )
+        
         # establish the data arrays
         time = p3_object['time'].values
-        #neighbor = np.arange(query_k)
 
         time_radar = xr.DataArray(
             data = np.ma.masked_where(mask_final, time_radar_matched),
@@ -855,6 +962,15 @@ class Match(ABC):
                 units = 's'
             )
         )
+        vel = xr.DataArray(
+            data = np.ma.masked_where(mask_final, vel_matched),
+            dims = 'time',
+            coords = dict(time = time, time_radar = time_radar),
+            attrs = dict(
+                description = 'Mean Doppler velocity among matched radar gates',
+                units = 'm s**-1'
+            )
+        )
         if self.name == 'Matched HIWRAP':
             dbz2 = xr.DataArray(
                 data = np.ma.masked_where(mask_final, dbz2_matched),
@@ -865,17 +981,33 @@ class Match(ABC):
                     units = 's'
                 )
             )
+            vel2 = xr.DataArray(
+                data = np.ma.masked_where(mask_final, vel2_matched),
+                dims = 'time',
+                coords = dict(time = time, time_radar = time_radar),
+                attrs = dict(
+                    description = 'Mean Doppler velocity among matched radar gates',
+                    units = 'm s**-1'
+                )
+            )
             data_vars = {
                 'dist_diff': ddiff,
                 'time_diff': tdiff,
                 'dbz_ka': dbz,
-                'dbz_ku': dbz2
+                'dbz_ku': dbz2,
+                'vel_ka': vel,
+                'vel_ku': vel2
             }
         else:
+            if self.name == 'Matched CRS':
+                freq = 'w'
+            elif self.name == 'Matched EXRAD':
+                freq = 'x'
             data_vars = {
                 'dist_diff': ddiff,
                 'time_diff': tdiff,
-                'dbz': dbz,
+                f'dbz_{freq}': dbz,
+                f'vel_{freq}': vel
             }
             
         # create dataset
@@ -914,57 +1046,57 @@ class MatchLidar(ABC):
         self.name = None
         self.data = None
         
-    def qc_radar(self, radar_object, qc=False):
+    def qc_radar(self, radar_dataset, qc=False):
         """
         xarray.Dataset (1-D) of QC'd radar data, with bad values removed
         """
         if (self.name == 'Matched CRS') or (self.name == 'Matched EXRAD'):
             # build mask
-            mask = np.zeros(radar_object['dbz'].shape, dtype=bool)
+            mask = np.zeros(radar_dataset['dbz'].shape, dtype=bool)
             mask[
-                (np.isnan(radar_object['dbz'].values)) |
-                (radar_object['height'].values < 500.)] = True
+                (np.isnan(radar_dataset['dbz'].values)) |
+                (radar_dataset['height'].values < 500.)] = True
             
             if qc: # additional qc based on Z variability and SPW
                 # compute IQR of Z using 9x3 (vertical x horizontal) moving window
                 # window should reflect similar distance in horizontal and vertical
                 iqr_dbz = generic_filter(
-                    radar_object['dbz'].values, iqr,
+                    radar_dataset['dbz'].values, iqr,
                     size=(9,3), mode='nearest'
                 )
 
                 # compute 5th percentile of spectrum width
-                p05_spw = np.nanpercentile(radar_object['width'].values, 5)
+                p05_spw = np.nanpercentile(radar_dataset['width'].values, 5)
                 
                 # additional conditions for mask
-                mask[(iqr_dbz > 5.) & (radar_object['width'].values < p05_spw)] = True
+                mask[(iqr_dbz > 5.) & (radar_dataset['width'].values < p05_spw)] = True
         elif self.name == 'Matched HIWRAP':
             # build mask
-            mask = np.zeros(radar_object['dbz_ku'].shape, dtype=bool)
+            mask = np.zeros(radar_dataset['dbz_ku'].shape, dtype=bool)
             mask[
-                (np.isnan(radar_object['dbz_ku'].values)) |
-                (np.isnan(radar_object['dbz_ka'].values)) |
-                (radar_object['height'].values < 500.)] = True
+                (np.isnan(radar_dataset['dbz_ku'].values)) |
+                (np.isnan(radar_dataset['dbz_ka'].values)) |
+                (radar_dataset['height'].values < 500.)] = True
             
             if qc: # additional qc based on Z variability and SPW
                 # compute IQR of Z using 9x3 (vertical x horizontal) moving window
                 # window should reflect similar distance in horizontal and vertical
                 iqr_dbz_ka = generic_filter(
-                    radar_object['dbz_ka'].values, iqr,
+                    radar_dataset['dbz_ka'].values, iqr,
                     size=(9,3), mode='nearest'
                 )
                 iqr_dbz_ku = generic_filter(
-                    radar_object['dbz_ku'].values, iqr,
+                    radar_dataset['dbz_ku'].values, iqr,
                     size=(9,3), mode='nearest'
                 )
 
                 # compute 5th percentile of spectrum width
-                p05_spw_ka = np.nanpercentile(radar_object['width_ka'].values, 5)
-                p05_spw_ku = np.nanpercentile(radar_object['width_ku'].values, 5)
+                p05_spw_ka = np.nanpercentile(radar_dataset['width_ka'].values, 5)
+                p05_spw_ku = np.nanpercentile(radar_dataset['width_ku'].values, 5)
                 
                 # additional conditions for mask
-                mask[(iqr_dbz_ka > 5.) & (radar_object['width_ka'].values < p05_spw_ka)] = True
-                mask[(iqr_dbz_ku > 5.) & (radar_object['width_ku'].values < p05_spw_ku)] = True
+                mask[(iqr_dbz_ka > 5.) & (radar_dataset['width_ka'].values < p05_spw_ka)] = True
+                mask[(iqr_dbz_ku > 5.) & (radar_dataset['width_ku'].values < p05_spw_ku)] = True
         
         # build 1D dataset with select radar vars
         gate_idx = np.arange(mask.shape[0] * mask.shape[1])
@@ -974,66 +1106,66 @@ class MatchLidar(ABC):
         )
         time_flat = xr.DataArray(
             data = np.tile(
-                np.atleast_2d(radar_object['time'].values),
-                (radar_object.dims['range'], 1)).flatten(),
+                np.atleast_2d(radar_dataset['time'].values),
+                (radar_dataset.dims['range'], 1)).flatten(),
             dims = 'gate_idx',
-            attrs = radar_object['time'].attrs
+            attrs = radar_dataset['time'].attrs
         )
         hght = xr.DataArray(
-            data =  radar_object['height'].values.flatten(),
+            data =  radar_dataset['height'].values.flatten(),
             dims = 'gate_idx',
-            attrs = radar_object['lat'].attrs
+            attrs = radar_dataset['lat'].attrs
         )
         dist_raw = (
-            xr.DataArray(np.ones(radar_object.dims['range']), dims=('range')) *
-            radar_object['distance']).values.flatten()
+            xr.DataArray(np.ones(radar_dataset.dims['range']), dims=('range')) *
+            radar_dataset['distance']).values.flatten()
         dist = xr.DataArray(
             data =  dist_raw - np.min(dist_raw),
             dims = 'gate_idx',
-            attrs = radar_object['distance'].attrs
+            attrs = radar_dataset['distance'].attrs
         )
         lat = xr.DataArray(
             data =  (
-                xr.DataArray(np.ones(radar_object.dims['range']), dims=('range')) *
-                radar_object['lat']).values.flatten(),
+                xr.DataArray(np.ones(radar_dataset.dims['range']), dims=('range')) *
+                radar_dataset['lat']).values.flatten(),
             dims = 'gate_idx',
-            attrs = radar_object['lat'].attrs
+            attrs = radar_dataset['lat'].attrs
         )
         lon = xr.DataArray(
             data =  (
-                xr.DataArray(np.ones(radar_object.dims['range']), dims=('range')) *
-                radar_object['lon']).values.flatten(),
+                xr.DataArray(np.ones(radar_dataset.dims['range']), dims=('range')) *
+                radar_dataset['lon']).values.flatten(),
             dims = 'gate_idx',
-            attrs = radar_object['lon'].attrs
+            attrs = radar_dataset['lon'].attrs
         )
         if (self.name == 'Matched CRS') or (self.name == 'Matched EXRAD'):
             dbz = xr.DataArray(
                 data =  (
-                    xr.DataArray(np.ones(radar_object.dims['range']), dims=('range')) *
-                    radar_object['dbz']).values.flatten(),
+                    xr.DataArray(np.ones(radar_dataset.dims['range']), dims=('range')) *
+                    radar_dataset['dbz']).values.flatten(),
                 dims = 'gate_idx',
                 coords = dict(
                     time = time_flat, height = hght, distance = dist,
                     lat = lat, lon = lon),
-                attrs = radar_object['dbz'].attrs
+                attrs = radar_dataset['dbz'].attrs
             )
             data_vars = {'dbz': dbz}
         elif self.name == 'Matched HIWRAP':
             dbz_ka = xr.DataArray(
-                data =  radar_object['dbz_ka'].values.flatten(),
+                data =  radar_dataset['dbz_ka'].values.flatten(),
                 dims = 'gate_idx',
                 coords = dict(
                     time = time_flat, height = hght, distance = dist,
                     lat = lat, lon = lon),
-                attrs = radar_object['dbz_ka'].attrs
+                attrs = radar_dataset['dbz_ka'].attrs
             )
             dbz_ku = xr.DataArray(
-                data =  radar_object['dbz_ku'].values.flatten(),
+                data =  radar_dataset['dbz_ku'].values.flatten(),
                 dims = 'gate_idx',
                 coords = dict(
                     time = time_flat, height = hght, distance = dist,
                     lat = lat, lon = lon),
-                attrs = radar_object['dbz_ku'].attrs
+                attrs = radar_dataset['dbz_ku'].attrs
             )
             data_vars = {'dbz_ka': dbz_ka, 'dbz_ku': dbz_ku}
         ds = xr.Dataset(
@@ -1057,7 +1189,7 @@ class MatchLidar(ABC):
 # ====================================== #
 class Hiwrap(Match):
     """
-    A class to represent the TAMMS flown on the P-3 during the IMPACTS field campaign.
+    A class to represent the CPL data matched to the P-3 position during the IMPACTS field campaign.
     Inherits from Instrument()
     
     Parameters
@@ -1085,11 +1217,80 @@ class Hiwrap(Match):
             time_thresh=None, qc=False, ref_coords=None, n_workers=1):
         self.name = 'Matched HIWRAP'
         
+        # get P-3 alt bounds
+        alt_minP3 = np.nanmin(p3_object['alt_gps'].values)
+        alt_maxP3 = np.nanmax(p3_object['alt_gps'].values)
+        alt_boundsP3 = (alt_minP3, alt_maxP3)
+        
         # qc radar data (threshold by Z gradient and SW if specified)
-        radar_qc = self.qc_radar(radar_object, qc)
+        radar_qc = self.qc_radar(radar_object, alt_boundsP3, qc)
         
         # read the raw data
-        self.data = self.matchdata(
+        self.data = self.match_radar(
+            radar_qc, p3_object, query_k, dist_thresh, time_thresh,
+            ref_coords, n_workers
+        )
+        """
+        xarray.Dataset of matched HIWRAP reflectivity and attributes
+        Dimensions:
+            - time: np.array(np.datetime64[s]) - The UTC time start of the N-s upsampled interval
+        Coordinates:
+            - time (time): np.array(np.datetime64[s]) - The UTC time start of the N-s upsampled interval
+            - distance (time): xarray.DataArray(float) - Along track ER-2 distance (m)
+            - lat (time): xarray.DataArray(float) - Latitude (degrees)
+            - lon (time): xarray.DataArray(float) - Longitude (degrees)
+        Variables:
+            - alt_gps (time) : xarray.DataArray(float) - P-3 GPS altitude (m above mean sea level)
+            - temp (time) : xarray.DataArray(float) - Static (ambient) air temperature (deg C)
+            - dwpt (time) : xarray.DataArray(float) - Dew point temperature (deg C)
+            - z_ku (time) : xarray.DataArray(float) - Matched Ku-band reflectivity (dBZ)
+            - z_ka (time) : xarray.DataArray(float) - Matched Ka-band reflectivity (dBZ)
+            - dfr_ku_ka (time) : xarray.DataArray(float) - Matched dual frequency ratio (dB)
+        """
+        
+# ====================================== #
+# CRS
+# ====================================== #
+class Crs(Match):
+    """
+    A class to represent the CRS data matched to the P-3 position during the IMPACTS field campaign.
+    Inherits from Instrument()
+    
+    Parameters
+    ----------
+    crs_object: impacts_tools.er2.Crs(Radar) object
+        The time-trimmed CRS radar object
+    p3_object: impacts_tools.p3.P3() object
+        The time-trimmed P-3 Met-Nav object
+    query_k: int
+        Number of radar gates considered in the average (1 - nearest neighbor)
+    dist_thresh: float
+        Maximum distance (m) allowed in the kdTree search
+    time_thresh: None or float
+        Maximum time offset (s) between ER-2 and P-3 allowed for matched instance
+    qc: bool
+        True - remove gates with high dbz gradient, no dbz, low spw
+        False - only remove gates with no dbz
+    ref_coords: None or 2-element tuple of float
+        Reference lat, lon pair (deg) to project ER-2 and P-3 points to cartesian grid.
+        None defaults to first lat, lon point in P-3 object
+    """
+    
+    def __init__(
+            self, radar_object, p3_object, query_k=1, dist_thresh=4000.,
+            time_thresh=None, qc=False, ref_coords=None, n_workers=1):
+        self.name = 'Matched CRS'
+        
+        # get P-3 alt bounds
+        alt_minP3 = np.nanmin(p3_object['alt_gps'].values)
+        alt_maxP3 = np.nanmax(p3_object['alt_gps'].values)
+        alt_boundsP3 = (alt_minP3, alt_maxP3)
+        
+        # qc radar data (threshold by Z gradient and SW if specified)
+        radar_qc = self.qc_radar(radar_object, alt_boundsP3, qc)
+        
+        # read the raw data
+        self.data = self.match_radar(
             radar_qc, p3_object, query_k, dist_thresh, time_thresh,
             ref_coords, n_workers
         )
