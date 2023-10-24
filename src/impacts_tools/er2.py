@@ -146,12 +146,23 @@ class Radar(ABC):
         # remove beams (time dim) that aren't in HIWRAP data (typically every other beam)
         self.data = self.data.sel(time=data_reference.data.time)
         
-        # find nearest CRS/EXRAD gate corresponding to HIWRAP range gates
-        # CRS/EXRAD height may be offset by 20-25 m (vertical sampling resolution)
-        # not a big deal as native vertical resolution much larger (> 100 m )
-        return self.data.interp(
-            range=data_reference.data.range, method='nearest', assume_sorted=True
-        )
+        # find nearest CRS/EXRAD gate corresponding to HIWRAP height
+        # need to iterate through each beam as height array varies with time
+        rad_interp_dummy = self.data.interp(
+            range=data_reference.data.range, method='nearest'#, assume_sorted=True
+        ) # preserve desired dim lengths, but will optimize interp below
+        vars_2d = list()
+        for var in rad_interp_dummy.data_vars: # only interp 2D vars
+            if rad_interp_dummy[var].ndim == 2:
+                vars_2d.append(var)
+        for idx in range(self.data.height.shape[1]): # time/beam loop
+            rad_interp_beam = self.data.isel(time=idx).swap_dims({'range': 'height'}).interp(
+                height=data_reference.data.height[:, idx].values, method='nearest'
+            ) # interp current beam based on HIWRAP gate altitudes
+            for var in vars_2d: # modify 2D var values for current beam
+                rad_interp_dummy[var].values[:, idx] = rad_interp_beam[var].values
+        rad_interp_dummy.height.values = data_reference.data.height.values # overwrite heights
+        return rad_interp_dummy
     
     def calc_cfad(self, vel_bins=None, alt_bins=None, band=None):
         """
@@ -829,8 +840,16 @@ class Crs(Radar):
             )   
         )
 
+        if dataset == '2023': # CRS spectrum width not in 2023 dataset
+            data_spw = np.ma.masked_invalid(
+                np.nan * np.zeros(hdf['Products']['Data']['dBZe'][:].T.shape)
+            )
+        else:
+            data_spw = np.ma.masked_invalid(
+                hdf['Products']['Data']['SpectrumWidth'][:].T
+            )
         width = xr.DataArray(
-            data = np.ma.masked_invalid(hdf['Products']['Data']['SpectrumWidth'][:].T),
+            data = data_spw,
             dims = ["range", "time"],
             coords = dict(
                 range = radar_range,
@@ -1040,6 +1059,30 @@ class Crs(Radar):
         self.data['kw_ice'] : xr.DataArray()
             Two-way path integrated attenuation due to ice scattering [dB]
         """
+        # attempt to remove P-3 skin paints that may affect correction
+        # loosely follows match.Match.qc_radar()
+        hiwrap_qc = hiwrap.data.copy()
+        mask = np.ones(hiwrap_qc.height.shape, dtype=bool)
+        mask[
+            (~np.isnan(hiwrap_qc['dbz_ku'].values)) &
+            (hiwrap_qc['height'].values >= 500.)] = False
+        mask = xr.DataArray(
+            data = mask,
+            dims = ['range', 'time'],
+            coords = dict(
+                range = hiwrap_qc.range,
+                time = hiwrap_qc.time
+            )
+        )
+        hiwrap_qc = hiwrap_qc.where(~mask) # set nan outside of these alts
+        dbz_std = hiwrap.data.dbz_ku.rolling(
+            range=9, time=3, center=True
+        ).std(skipna=True) # dbz stdev using rolling window
+        spw_p01 = np.nanpercentile(hiwrap_qc.width_ku.values, 1)
+        hiwrap_qc = hiwrap_qc.where(
+            (dbz_std <= 5.) & (hiwrap_qc.width_ku > spw_p01)
+        ) # additional masking based on these thresholds
+                    
         # fit Kulie et al. (2014) relationship to a Z_ku-dependent func
         dbz_ku_lin = np.array([0., 2000., 4000., 6000., 8000.]) # mm**6 / m**-3
         ks_w_coeff = np.array([0., 7.5, 15.5, 23.75, 31.5]) # db / km
@@ -1048,7 +1091,7 @@ class Crs(Radar):
         ) # slope, intercept coeffs
         
         # calculate attenuation (k) per gate and clean up data
-        data_dbz_ku = hiwrap.data.dbz_ku.values
+        data_dbz_ku = hiwrap_qc.dbz_ku.values
         ks_w = ks_w_func(10. ** (data_dbz_ku / 10.)) # db / km
         ks_w = ks_w * 0.0265 # convert to db per gate
         if data_temperature is None: # clean up k values except for T > 0C
@@ -1259,7 +1302,7 @@ class Hiwrap(Radar):
             time_inds = np.where((time_dt64 != None))[0]
             
         # Time information for Ka-band data from 2022 deployment (separate file)
-        if dataset=='2022':
+        if dataset!='2020':
             time2_raw = hdf2['Time']['Data']['TimeUTC'][:]
             time2_dt = [
                 datetime(1970, 1, 1) + timedelta(seconds=time2_raw[i])
@@ -2628,7 +2671,7 @@ class Cpl(Lidar):
     """
 
     def __init__(self, filepath, start_time=None, end_time=None, max_roll=None,
-                 atb_sigma=None, l1b_trim_ref=None, l2_cloudtop_ref=None):
+                 atb_sigma=None, l1b_trim_ref=None, l2_cloudtop_ref=None, qc=True):
         # read the raw data
         if 'ATB' in filepath:
             self.name = 'CPL ATB'
@@ -2663,7 +2706,7 @@ class Cpl(Lidar):
                     self.data[var] = self.despeckle(self.data[var], atb_sigma)
         elif ('L2' in filepath) and ('Pro' in filepath):
             self.name = 'CPL L2 Profiles'
-            self.data = self.readfile_l2pro(filepath, start_time, end_time)
+            self.data = self.readfile_l2pro(filepath, start_time, end_time, qc)
             """
                 xarray.Dataset of lidar variables and attributes
 
@@ -2933,7 +2976,7 @@ class Cpl(Lidar):
         
         return ds.drop_duplicates('time')
     
-    def readfile_l2pro(self, filepath, start_time=None, end_time=None):
+    def readfile_l2pro(self, filepath, start_time=None, end_time=None, qc=True):
         """
         Reads the CPL L2 profile data file and unpacks the fields into an xarray.Dataset
 
@@ -2946,6 +2989,8 @@ class Cpl(Lidar):
             The initial time of interest
         end_time : np.datetime64 or None
             The final time of interest
+        qc: bool
+            Whether (True) to mask the depolarization ratio by the non-nan extinction
         
         Returns
         -------
@@ -3071,11 +3116,18 @@ class Cpl(Lidar):
                 units='km**-1'
             )
         )
-        dpol_data = np.ma.masked_where(
-            np.isnan(ext1064.values),
-            hdf['profile']['Total_Depolarization_Ratio_1064'][:, tind]
-        )
+        if qc:
+            dpol_data = np.ma.masked_where(
+                np.isnan(ext355.values),
+                hdf['profile']['Total_Depolarization_Ratio_1064'][:, tind]
+            )
+        else:
+            dpol_data = hdf['profile']['Total_Depolarization_Ratio_1064'][:, tind]
         dpol_data = np.ma.masked_where(dpol_data < 0., dpol_data)
+        #dpol_data = np.ma.masked_where(
+            #hdf['profile']['Total_Depolarization_Ratio_1064'][:, tind] < 0.,
+            #hdf['profile']['Total_Depolarization_Ratio_1064'][:, tind]
+        #)
         dpol1064 = xr.DataArray(
             data = dpol_data,
             dims = ['gate', 'time'],

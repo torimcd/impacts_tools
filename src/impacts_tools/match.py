@@ -73,25 +73,37 @@ class Match(ABC):
                     range=9, time=3, center=True
                 ).std(skipna=True)
 
-                # compute top percentile of spectrum width
-                spw_p01 = np.nanpercentile(ds_qc.width.values, 1)
-                
-                # additional masking based on these thresholds
-                ds_qc = ds_qc.where(
-                    (dbz_std <= 5.) & (ds_qc.width > spw_p01)
-                )
+                if (self.name != 'Matched CRS') and (ds_qc.data.attrs['Date'][:4] != '2023'):
+                    # compute top percentile of spectrum width
+                    spw_p01 = np.nanpercentile(ds_qc.width.values, 1)
+
+                    # additional masking based on these thresholds
+                    ds_qc = ds_qc.where(
+                        (dbz_std <= 5.) & (ds_qc.width > spw_p01)
+                    )
+                else: # no spectrum width in 2023 CRS data, only qc by dbz
+                    ds_qc = ds_qc.where(dbz_std <= 5.)
         elif self.name == 'Matched HIWRAP':
             # mask based on alt relative to P-3 (+/- 250 m) and ground
             ds_qc = radar_dataset.copy()
             mask = np.ones(ds_qc.height.shape, dtype=bool)
-            mask[
-                (ds_qc['height'].values >= alt_bounds_p3[0] - 250.) &
-                (ds_qc['height'].values <= alt_bounds_p3[1] + 250.) &
-                (~np.isnan(ds_qc['dbz_ku'].values)) &
-                (~np.isnan(ds_qc['dbz_ka'].values)) &
-                (~np.isnan(ds_qc['vel_ku'].values)) &
-                (~np.isnan(ds_qc['vel_ka'].values)) &
-                (ds_qc['height'].values >= 500.)] = False
+            if ds_qc.attrs['Date'] == '20230125': # special case (no Ka vel)
+                mask[
+                    (ds_qc['height'].values >= alt_bounds_p3[0] - 250.) &
+                    (ds_qc['height'].values <= alt_bounds_p3[1] + 250.) &
+                    (~np.isnan(ds_qc['dbz_ku'].values)) &
+                    (~np.isnan(ds_qc['dbz_ka'].values)) &
+                    (~np.isnan(ds_qc['vel_ku'].values)) &
+                    (ds_qc['height'].values >= 500.)] = False
+            else:
+                mask[
+                    (ds_qc['height'].values >= alt_bounds_p3[0] - 250.) &
+                    (ds_qc['height'].values <= alt_bounds_p3[1] + 250.) &
+                    (~np.isnan(ds_qc['dbz_ku'].values)) &
+                    (~np.isnan(ds_qc['dbz_ka'].values)) &
+                    (~np.isnan(ds_qc['vel_ku'].values)) &
+                    (~np.isnan(ds_qc['vel_ka'].values)) &
+                    (ds_qc['height'].values >= 500.)] = False
             mask = xr.DataArray(
                 data = mask,
                 dims = ['range', 'time'],
@@ -114,8 +126,11 @@ class Match(ABC):
 
                 # compute top percentile of spectrum width
                 spw_ku_p01 = np.nanpercentile(ds_qc.width_ku.values, 1)
-                spw_ka_p01 = np.nanpercentile(ds_qc.width_ka.values, 1)
-                
+                if ds_qc.attrs['Date'] == '20230125':
+                    spw_ka_p01 = 0. # dummy val to skip qc based on spec width
+                else:
+                    spw_ka_p01 = np.nanpercentile(ds_qc.width_ka.values, 1)
+
                 # additional masking based on these thresholds (run twice)
                 ds_qc = ds_qc.where(
                     (dbz_ku_std <= 5.) & (ds_qc.width_ku > spw_ku_p01)
@@ -241,7 +256,6 @@ class Match(ABC):
 
         # trim dataset based on flattened boolean flag
         ds = ds.where(~mask_flat, drop=True)
-        
         return ds
     
     def qc_lidar(self, lidar_dataset, alt_bounds_p3, qc=False):
@@ -959,7 +973,7 @@ class Match(ABC):
             coords = dict(time = time, time_radar = time_radar),
             attrs = dict(
                 description = 'Mean reflectivity among matched radar gates',
-                units = 's'
+                units = 'dBZ'
             )
         )
         vel = xr.DataArray(
@@ -978,7 +992,7 @@ class Match(ABC):
                 coords = dict(time = time, time_radar = time_radar),
                 attrs = dict(
                     description = 'Mean reflectivity among matched radar gates',
-                    units = 's'
+                    units = 'dBZ'
                 )
             )
             vel2 = xr.DataArray(
@@ -1213,7 +1227,7 @@ class Hiwrap(Match):
     """
     
     def __init__(
-            self, radar_object, p3_object, query_k=1, dist_thresh=4000.,
+            self, radar_object, p3_object, query_k=30, dist_thresh=4000.,
             time_thresh=None, qc=False, ref_coords=None, n_workers=1):
         self.name = 'Matched HIWRAP'
         
@@ -1277,7 +1291,7 @@ class Crs(Match):
     """
     
     def __init__(
-            self, radar_object, p3_object, query_k=1, dist_thresh=4000.,
+            self, radar_object, p3_object, query_k=30, dist_thresh=4000.,
             time_thresh=None, qc=False, ref_coords=None, n_workers=1):
         self.name = 'Matched CRS'
         
@@ -1341,7 +1355,7 @@ class Cpl(Match):
     """
     
     def __init__(
-            self, lidar_object, p3_object, query_k=1, dist_thresh=4000.,
+            self, lidar_object, p3_object, query_k=30, dist_thresh=4000.,
             time_thresh=None, qc=False, ref_coords=None, n_workers=1):
         if 'atb_1064' in lidar_object.data_vars: # L1B ATB data
             self.name = 'Matched CPL ATB'

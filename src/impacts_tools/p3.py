@@ -2566,6 +2566,76 @@ class Psd(Instrument):
         return ds_merged
     
     def weight_psd(self, psd_2ds, psd_hvps, qc_thresh, binlims):
+        if (binlims[1] == 0.8) and (psd_hvps.bin_left.values[0] == 0.8):
+            psd_temp = psd_hvps.isel(size=[0])
+            psd_refine = xr.Dataset(
+                data_vars = {
+                    'count': xr.DataArray(
+                        data = np.tile(psd_temp['count'].values / 2., (2, 1)),
+                        dims = ['size', 'time'],
+                        attrs = psd_temp['count'].attrs
+                    ),
+                    'count_habit': xr.DataArray(
+                        data = np.tile(psd_temp['count_habit'].values / 2., (1, 2, 1)),
+                        dims = ['habit', 'size', 'time'],
+                        attrs = psd_temp['count_habit'].attrs
+                    ),
+                    'sv': xr.DataArray(
+                        data = np.tile(psd_temp['sv'].values, (2, 1)),
+                        dims = ['size', 'time'],
+                        attrs = psd_temp['sv'].attrs
+                    ),
+                    'ND': xr.DataArray(
+                        data = np.tile(psd_temp['ND'].values, (2, 1)),
+                        dims = ['size', 'time'],
+                        attrs = psd_temp['ND'].attrs
+                    ),
+                    'ND_habit': xr.DataArray(
+                        data = np.tile(psd_temp['ND_habit'].values, (1, 2, 1)),
+                        dims = ['habit', 'size', 'time'],
+                        attrs = psd_temp['ND_habit'].attrs
+                    ),
+                    'area_ratio': xr.DataArray(
+                        data = np.tile(psd_temp['area_ratio'].values, (2, 1)),
+                        dims = ['size', 'time'],
+                        attrs = psd_temp['area_ratio'].attrs
+                    ),
+                    'aspect_ratio': xr.DataArray(
+                        data = np.tile(psd_temp['aspect_ratio'].values, (2, 1)),
+                        dims = ['size', 'time'],
+                        attrs = psd_temp['aspect_ratio'].attrs
+                    )
+                },
+                coords={
+                    'habit': psd_temp['habit'],
+                    'bin_center': xr.DataArray(
+                        data = np.array([0.85, 0.95]),
+                        dims = 'size',
+                        attrs = psd_temp['bin_center'].attrs
+                    ),
+                    'bin_left': xr.DataArray(
+                        data = np.array([0.8, 0.9]),
+                        dims = 'size',
+                        attrs = psd_temp['bin_left'].attrs
+                    ),
+                    'bin_right': xr.DataArray(
+                        data = np.array([0.9, 1.]),
+                        dims = 'size',
+                        attrs = psd_temp['bin_right'].attrs
+                    ),
+                    'bin_width': xr.DataArray(
+                        data = np.array([0.01, 0.01]),
+                        dims = 'size',
+                        attrs = psd_temp['bin_width'].attrs
+                    ),
+                    'time': psd_temp['time']
+                },
+                attrs = psd_temp.attrs
+            )
+            psd_hvps = xr.concat(
+                [psd_refine, psd_hvps.isel(size=slice(1, len(psd_hvps.size)))],
+                dim='size', data_vars='minimal'
+            )
         bin_mid = xr.DataArray(
             data = np.append(
                 psd_2ds['bin_center'].values,
@@ -2666,6 +2736,23 @@ class Psd(Instrument):
                 bin_width=dD, time=psd_interp_2ds.time),
             attrs = psd_2ds['count'].attrs
         )
+        psd_interp_2ds['count_habit'] = ((dD / dD_2ds) * psd_interp_2ds['count_habit']).transpose(
+            'habit', 'size', 'time'
+        )
+        psd_interp_2ds['count_habit'].values[np.isnan(psd_interp_2ds['count_habit'])] = 0.
+        psd_interp_hvps['count_habit'] = ((dD / dD_hvps) * psd_interp_hvps['count_habit']).transpose(
+            'habit', 'size', 'time'
+        )
+        psd_interp_hvps['count_habit'].values[np.isnan(psd_interp_hvps['count_habit'])] = 0.
+        count_hab_temp = psd_interp_2ds['count_habit'].values + psd_interp_hvps['count_habit'].values
+        count_hab = xr.DataArray(
+            data = count_hab_temp,
+            dims = ['habit', 'size', 'time'],
+            coords = dict(
+                habit=psd_interp_2ds.habit, bin_center=bin_mid, bin_left=bin_min,
+                bin_right=bin_max, bin_width=dD, time=psd_interp_2ds.time),
+            attrs = psd_2ds['count_habit'].attrs
+        )
         
         # compute weighted mean of sample volume
         psd_interp_2ds['sv'].values[np.isnan(psd_interp_2ds['sv'])] = 0.
@@ -2693,6 +2780,23 @@ class Psd(Instrument):
                 bin_center=bin_mid, bin_left=bin_min, bin_right=bin_max,
                 bin_width=dD, time=psd_interp_2ds.time),
             attrs = psd_2ds['ND'].attrs
+        )
+        psd_interp_2ds['ND_habit'] = ((dD / dD_2ds) * psd_interp_2ds['ND_habit']).transpose(
+            'habit', 'size', 'time'
+        )
+        psd_interp_2ds['ND_habit'].values[np.isnan(psd_interp_2ds['ND_habit'])] = 0.
+        psd_interp_hvps['ND_habit'] = ((dD / dD_hvps) * psd_interp_hvps['ND_habit']).transpose(
+            'habit', 'size', 'time'
+        )
+        psd_interp_hvps['ND_habit'].values[np.isnan(psd_interp_hvps['ND_habit'])] = 0.
+        ND_hab_temp = psd_interp_2ds['ND_habit'].values + psd_interp_hvps['ND_habit'].values
+        ND_hab = xr.DataArray(
+            data = np.ma.masked_where(ND_hab_temp == 0., ND_hab_temp),
+            dims = ['habit', 'size', 'time'],
+            coords = dict(
+                habit=psd_interp_2ds.habit, bin_center=bin_mid, bin_left=bin_min,
+                bin_right=bin_max, bin_width=dD, time=psd_interp_2ds.time),
+            attrs = psd_2ds['ND_habit'].attrs
         )
 
         # compute weighted mean of aspect and area ratio distributions
@@ -2724,8 +2828,10 @@ class Psd(Instrument):
         psd_merged = xr.Dataset(
             data_vars={
                 'count': count,
+                'count_habit': count_hab,
                 'sv': sv,
                 'ND': ND,
+                'ND_habit': ND_hab,
                 'area_ratio': ar,
                 'aspect_ratio': asr
             },
@@ -2736,7 +2842,8 @@ class Psd(Instrument):
                 'bin_width': dD,
                 'weight_2ds': weight_2ds,
                 'weight_hvps': weight_hvps,
-                'time': psd_interp_2ds.time
+                'time': psd_interp_2ds.time,
+                'habit': psd_interp_2ds.habit
             },
             attrs = psd_interp_2ds.attrs
         )
@@ -2796,6 +2903,10 @@ class Psd(Instrument):
                 self.data['sv']).sum(dim='size') / (
                 mass_bf / self.data['sv']
             ).sum(dim='size') # mass-weighted mean D from Chase et al. (2020) (mm)
+            dmelt_bf_temp = ((6. * mass_particle) / (np.pi * 0.997)) ** (1. / 3.)
+            nw_bf_temp = np.log10((1e5) * (4.**4 / 6) * (
+                dmelt_bf_temp**3 * self.data.ND * self.data.bin_width).sum(dim='size') ** 5 / (
+                dmelt_bf_temp**4 * self.data.ND * self.data.bin_width).sum(dim='size') ** 4)
             ar_bf_temp = (
                 self.data['area_ratio'] * mass_bf / self.data['sv']).sum(dim='size') / (
                 mass_bf / self.data['sv']
@@ -2843,6 +2954,10 @@ class Psd(Instrument):
                 self.data['sv']).sum(dim='size') / (
                 mass_hy / self.data['sv']
             ).sum(dim='size') # mass-weighted mean D from Chase et al. (2020) (mm)
+            dmelt_hy_temp = ((6. * mass_particle) / (np.pi * 0.997)) ** (1. / 3.)
+            nw_hy_temp = np.log10((1e5) * (4.**4 / 6) * (
+                dmelt_hy_temp**3 * self.data.ND * self.data.bin_width).sum(dim='size') ** 5 / (
+                dmelt_hy_temp**4 * self.data.ND * self.data.bin_width).sum(dim='size') ** 4)
             ar_hy_temp = (
                 self.data['area_ratio'] * mass_hy / self.data['sv']).sum(dim='size') / (
                 mass_hy / self.data['sv']
@@ -3070,12 +3185,21 @@ class Psd(Instrument):
                 description='Number-weighted mean aspect ratio (elliptical fit)',
                 units = '#')
         )
+        nw_bf = xr.DataArray(
+            data = nw_bf_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Normalized PSD intercept parameter [Brown and Francis (1995) m-D relationship]',
+                relationship='m = 0.00196 * D ** 1.9',
+                units = 'log10(m**-3 mm**-1)')
+        )
         N0_bf = xr.DataArray(
             data = N0_bf_temp,
             dims = 'time',
             coords = dict(time=self.data.time),
             attrs = dict(
-                description='PSD intercept parameter [Baker and Lawson (1995) m-D relationship]',
+                description='PSD intercept parameter [Brown and Francis (1995) m-D relationship]',
                 relationship='m = 0.00196 * D ** 1.9',
                 units = 'cm-4')
         )
@@ -3084,7 +3208,7 @@ class Psd(Instrument):
             dims = 'time',
             coords = dict(time=self.data.time),
             attrs = dict(
-                description='PSD shape parameter [Baker and Lawson (1995) m-D relationship]',
+                description='PSD shape parameter [Brown and Francis (1995) m-D relationship]',
                 relationship='m = 0.00196 * D ** 1.9',
                 units = '#')
         )
@@ -3093,7 +3217,7 @@ class Psd(Instrument):
             dims = 'time',
             coords = dict(time=self.data.time),
             attrs = dict(
-                description='PSD slope parameter [Baker and Lawson (1995) m-D relationship]',
+                description='PSD slope parameter [Brown and Francis (1995) m-D relationship]',
                 relationship='m = 0.00196 * D ** 1.9',
                 units = 'cm-1')
         )
@@ -3102,7 +3226,7 @@ class Psd(Instrument):
             dims = 'time',
             coords = dict(time=self.data.time),
             attrs = dict(
-                description='Ice water content [Baker and Lawson (1995) m-D relationship]',
+                description='Ice water content [Brown and Francis (1995) m-D relationship]',
                 relationship='m = 0.00196 * D ** 1.9',
                 units = 'g m-3')
         )
@@ -3111,7 +3235,7 @@ class Psd(Instrument):
             dims = 'time',
             coords = dict(time=self.data.time),
             attrs = dict(
-                description='Mass-weighted mean diameter [Baker and Lawson (1995) m-D relationship]',
+                description='Mass-weighted mean diameter [Brown and Francis (1995) m-D relationship]',
                 relationship='m = 0.00196 * D ** 1.9',
                 units = 'mm')
         )
@@ -3120,7 +3244,7 @@ class Psd(Instrument):
             dims = 'time',
             coords = dict(time=self.data.time),
             attrs = dict(
-                description='Median mass diameter [Baker and Lawson (1995) m-D relationship]',
+                description='Median mass diameter [Brown and Francis (1995) m-D relationship]',
                 relationship='m = 0.00196 * D ** 1.9',
                 units = 'mm')
         )
@@ -3129,7 +3253,7 @@ class Psd(Instrument):
             dims = 'time',
             coords = dict(time=self.data.time),
             attrs = dict(
-                description='Mass-weighted mean area ratio [Baker and Lawson (1995) m-D relationship]',
+                description='Mass-weighted mean area ratio [Brown and Francis (1995) m-D relationship]',
                 relationship='m = 0.00196 * D ** 1.9',
                 units = '#')
         )
@@ -3138,7 +3262,7 @@ class Psd(Instrument):
             dims = 'time',
             coords = dict(time=self.data.time),
             attrs = dict(
-                description='Mass-weighted mean aspect ratio [Baker and Lawson (1995) m-D relationship]',
+                description='Mass-weighted mean aspect ratio [Brown and Francis (1995) m-D relationship]',
                 relationship='m = 0.00196 * D ** 1.9',
                 units = '#')
         )
@@ -3147,9 +3271,18 @@ class Psd(Instrument):
             dims = 'time',
             coords = dict(time=self.data.time),
             attrs = dict(
-                description='Effective density [Baker and Lawson (1995) m-D relationship]',
+                description='Effective density [Brown and Francis (1995) m-D relationship]',
                 relationship='m = 0.00196 * D ** 1.9',
                 units = 'g cm-3')
+        )
+        nw_hy = xr.DataArray(
+            data = nw_hy_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Normalized PSD intercept parameter [Heymsfield et al. (2010) m-D relationship]',
+                relationship='m = 0.00528 * D ** 2.1',
+                units = 'log10(m**-3 mm**-1)')
         )
         N0_hy = xr.DataArray(
             data = N0_hy_temp,
@@ -3239,7 +3372,7 @@ class Psd(Instrument):
                 coords = dict(time=self.data.time),
                 attrs = dict(
                     description='Normalized PSD intercept parameter [Leinonen and Szyrmer (2015) m-D relationships]',
-                    units = 'cm-4')
+                    units = 'log10(m**-3 mm**-1)')
             ).where(np.sum(dbz_error, axis=0) > 0.)
             N0_ls = xr.DataArray(
                 data = N0_ls_temp,
@@ -3318,7 +3451,8 @@ class Psd(Instrument):
                 'n': n,
                 'am': am.where(np.sum(dbz_error, axis=0) > 0.),
                 'bm': bm.where(np.sum(dbz_error, axis=0) > 0.),
-                'N0_bf': N0_bf, 'N0_hy': N0_hy, 'nw_ls': nw_ls, 'N0_ls': N0_ls,
+                'nw_bf': nw_bf, 'nw_hy': nw_hy, 'nw_ls': nw_ls,
+                'N0_bf': N0_bf, 'N0_hy': N0_hy, 'N0_ls': N0_ls,
                 'mu_bf': mu_bf, 'mu_hy': mu_hy, 'mu_ls': mu_ls,
                 'lambda_bf': lam_bf, 'lambda_hy': lam_hy, 'lambda_ls': lam_ls,
                 'iwc_bf': iwc_bf, 'iwc_hy': iwc_hy, 'iwc_ls': iwc_ls,
