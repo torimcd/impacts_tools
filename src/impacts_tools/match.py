@@ -599,10 +599,20 @@ class Match(ABC):
                     ]
         
         # mask data
-        mask_timedelta = np.append(
-            np.array([False]),
-            np.array(np.diff(time_lidar_matched) < np.timedelta64(500, 'ms'), dtype=bool)
-        ) # matched lidar time doesn't change when it should always increase
+        # time difference between points
+        mask_timedelta = np.zeros(len(time_lidar_matched), dtype=bool)
+        time_lastgood = time_lidar_matched[0]
+        for idx in range(1, len(time_lidar_matched)):
+            if np.isnat(time_lidar_matched[idx]): # mask if NaT
+                mask_timedelta[idx] = True
+            elif time_lidar_matched[idx] - time_lastgood < np.timedelta64(200, 'ms'):
+                mask_timedelta[idx] = True
+            else:
+                time_lastgood = time_lidar_matched[idx]
+        # mask_timedelta = np.append(
+        #     np.array([False]),
+        #     np.array(np.diff(time_lidar_matched) < np.timedelta64(500, 'ms'), dtype=bool)
+        # ) # matched lidar time doesn't change when it should always increase
         mask_altdiff = np.abs(
             alt_lidar_matched.data - p3_object['alt_gps'].values
         ) > 250. # mean gate alt > 250 m from P-3 alt

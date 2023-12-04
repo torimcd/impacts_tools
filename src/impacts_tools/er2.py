@@ -294,7 +294,7 @@ class Lidar(ABC):
         return self.data.where(abs(self.data['er2_roll']) < max_roll)
 
 
-    def despeckle(self, data_array=None, sigma=1.):
+    def despeckle(self, data_array=None, sigma=0.2):
         """
         Despeckle the lidar data by applying a Gaussion filter with a given standard deviation
 
@@ -312,6 +312,42 @@ class Lidar(ABC):
 
         # np.isfinite returns values that are not NAN or INF
         return data_array.where(np.isfinite(temp_datafiltered))
+    
+    def qc_profile(self, data_array, cpl_layer_object):
+        """
+        QC the lidar profile by applying a mask based on the L2 layer information
+        """
+        mask = np.ones(self.data.height.shape).astype(int)
+        alts_top = cpl_layer_object.data.layer_top_altitude.interp_like(
+            self.data.time, method='nearest', kwargs={'fill_value': 'extrapolate'}
+        )
+        alts_base = cpl_layer_object.data.layer_base_altitude.interp_like(
+            self.data.time, method='nearest', kwargs={'fill_value': 'extrapolate'}
+        )
+        layers = cpl_layer_object.data.number_layers.interp_like(
+            self.data.time, method='nearest', kwargs={'fill_value': 'extrapolate'}
+        )
+        for prof in range(len(layers)):
+            nlayers = layers.values[prof]
+            if nlayers > 0.:
+                alts_top_temp = alts_top.values[:, prof]
+                alts_base_temp = alts_base.values[:, prof]
+                for lay in range(int(nlayers)):
+                    inds_good = (
+                        self.data.height.values[:, prof] >= alts_base_temp[lay]
+                    ) &  (self.data.height.values[:, prof] <= alts_top_temp[lay])
+                    mask[inds_good, prof] = 0
+        mask = xr.DataArray(
+            data = mask,
+            dims = ['gate', 'time'],
+            coords = dict(
+                gate = self.data.gate,
+                time = self.data.time,
+            )
+        )
+        
+        # return nan for pixels not residing within layers
+        return data_array.where(mask == 0)
     
     def trim_time_bounds(self, start_time=None, end_time=None, tres='1S'):
         """
@@ -807,7 +843,8 @@ class Crs(Radar):
         radar_range = hdf['Products']['Information']['Range'][:] # this is the second dimension on product data
 
         [alt2d, radar_range2d] = np.meshgrid(altitude, radar_range)
-        hght = alt2d - radar_range2d
+        dzdr2d = np.tile(np.atleast_2d(dzdr.values), (len(radar_range), 1)) # delta z [m] per range [m]
+        hght = alt2d + dzdr2d * radar_range2d
 
         height = xr.DataArray(
             data = hght[:],
@@ -862,6 +899,22 @@ class Crs(Radar):
                 description=hdf['Products']['Information']['SpectrumWidth_description'][0].decode('UTF-8'),
                 units = hdf['Products']['Information']['SpectrumWidth_units'][0].decode('UTF-8')
             ) 
+        )
+        
+        ldr = xr.DataArray(
+            data = np.ma.masked_invalid(hdf['Products']['Data']['LDR'][:].T),
+            dims = ["range", "time"],
+            coords = dict(
+                range = radar_range,
+                height = height,
+                time = time_dt64,
+                distance = nomdist,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description=hdf['Products']['Information']['LDR_description'][0].decode('UTF-8'),
+                units = hdf['Products']['Information']['LDR_units'][0].decode('UTF-8')
+            )
         )
 
         if 'Velocity_corrected' in list(hdf['Products']['Data'].keys()):
@@ -991,6 +1044,7 @@ class Crs(Radar):
                 "dbz": dbz[:, time_inds],
                 "vel": vel[:, time_inds],
                 "width": width[:, time_inds],
+                "ldr": ldr[:, time_inds],
                 "vel_horiz_offset": vel_horizwind_offset[:, time_inds],
                 "mask_copol": mask_copol[:, time_inds],
                 "horizontal_resolution": horiz_resolution[:],
@@ -1486,7 +1540,8 @@ class Hiwrap(Radar):
         radar_range = hdf['Products']['Information']['Range'][:] # this is the second dimension on product data
 
         [alt2d, radar_range2d] = np.meshgrid(altitude, radar_range)
-        hght = alt2d - radar_range2d
+        dzdr2d = np.tile(np.atleast_2d(dzdr.values), (len(radar_range), 1)) # delta z [m] per range [m]
+        hght = alt2d + dzdr2d * radar_range2d
 
         height = xr.DataArray(
             data = hght[:],
@@ -2383,7 +2438,8 @@ class Exrad(Radar):
 
 
         [alt2d, radar_range2d] = np.meshgrid(altitude, radar_range)
-        hght = alt2d - radar_range2d
+        dzdr2d = np.tile(np.atleast_2d(dzdr.values), (len(radar_range), 1)) # delta z [m] per range [m]
+        hght = alt2d + dzdr2d * radar_range2d
 
         height = xr.DataArray(
             data = hght[:],
@@ -2671,7 +2727,7 @@ class Cpl(Lidar):
     """
 
     def __init__(self, filepath, start_time=None, end_time=None, max_roll=None,
-                 atb_sigma=None, l1b_trim_ref=None, l2_cloudtop_ref=None, qc=True):
+                 atb_sigma=None, l1b_trim_ref=None, l2_cloudtop_ref=None, l2_qc_ref=None):
         # read the raw data
         if 'ATB' in filepath:
             self.name = 'CPL ATB'
@@ -2706,7 +2762,7 @@ class Cpl(Lidar):
                     self.data[var] = self.despeckle(self.data[var], atb_sigma)
         elif ('L2' in filepath) and ('Pro' in filepath):
             self.name = 'CPL L2 Profiles'
-            self.data = self.readfile_l2pro(filepath, start_time, end_time, qc)
+            self.data = self.readfile_l2pro(filepath, start_time, end_time)
             """
                 xarray.Dataset of lidar variables and attributes
 
@@ -2768,7 +2824,15 @@ class Cpl(Lidar):
         if (l2_cloudtop_ref is not None) and (
                     (self.name == 'CPL ATB') or (self.name == 'CPL L2 Profiles')):
                 self.data = self.get_cloudtop_properties(l2_cloudtop_ref)
-            
+                
+        # qc profile (2D) data based on L2 Layer information/data
+        if (l2_qc_ref is not None) and (self.name == 'CPL ATB'):
+            for var in ['atb_1064', 'atb_532', 'atb_355']:
+                self.data[var] = self.qc_profile(self.data[var], l2_qc_ref)
+        elif (l2_qc_ref is not None) and (self.name == 'CPL L2 Profiles'):
+            for var in ['ext_1064', 'ext_532', 'ext_355', 'dpol_1064']:
+                self.data[var] = self.qc_profile(self.data[var], l2_qc_ref)
+        
         # mask values when aircraft is rolling
         if (max_roll is not None) and ('er2_roll' in self.data.data_vars):
             self.data = self.mask_roll(max_roll)
@@ -3008,7 +3072,14 @@ class Cpl(Lidar):
                 seconds=int((86400. * (jday[i, 1] - 1)).round())
             ) for i in range(jday.shape[0])], dtype='datetime64[ms]'
         )
-        dt, tind = np.unique(dt, return_index=True) # ignore duplicate times
+        dt, tind, tinv = np.unique(
+            dt, return_index=True, return_inverse=True
+        ) # ignore duplicate times
+        if len(dt) < len(tinv): # diagnostic - print original inds to duplicates
+            print(
+                'CPL L2 profile indices where duplicate times were removed:\n'
+                f'{(np.diff(tinv) == 0).nonzero()[0] + 1}'
+            )
         dt_start = xr.DataArray(
             data=np.array(
                 [date + timedelta(
@@ -3043,7 +3114,7 @@ class Cpl(Lidar):
             )
         )
         lon = xr.DataArray(
-            data = hdf['geolocation']['CPL_Longitude'][tind ,1],
+            data = hdf['geolocation']['CPL_Longitude'][tind, 1],
             dims = ['time'],
             coords = dict(time=dt),
             attrs = dict(
@@ -3116,18 +3187,10 @@ class Cpl(Lidar):
                 units='km**-1'
             )
         )
-        if qc:
-            dpol_data = np.ma.masked_where(
-                np.isnan(ext355.values),
-                hdf['profile']['Total_Depolarization_Ratio_1064'][:, tind]
-            )
-        else:
-            dpol_data = hdf['profile']['Total_Depolarization_Ratio_1064'][:, tind]
-        dpol_data = np.ma.masked_where(dpol_data < 0., dpol_data)
-        #dpol_data = np.ma.masked_where(
-            #hdf['profile']['Total_Depolarization_Ratio_1064'][:, tind] < 0.,
-            #hdf['profile']['Total_Depolarization_Ratio_1064'][:, tind]
-        #)
+        dpol_data = np.ma.masked_where(
+            hdf['profile']['Total_Depolarization_Ratio_1064'][:, tind] < 0.,
+            hdf['profile']['Total_Depolarization_Ratio_1064'][:, tind]
+        )
         dpol1064 = xr.DataArray(
             data = dpol_data,
             dims = ['gate', 'time'],
@@ -3263,7 +3326,14 @@ class Cpl(Lidar):
                 seconds=int((86400. * (jday[i, 1] - 1)).round())
             ) for i in range(jday.shape[0])], dtype='datetime64[ms]'
         )
-        dt, tind = np.unique(dt, return_index=True) # ignore duplicate times
+        dt, tind, tinv = np.unique(
+            dt, return_index=True, return_inverse=True
+        ) # ignore duplicate times
+        if len(dt) < len(tinv): # diagnostic - print original inds to duplicates
+            print(
+                'CPL L2 layer indices where duplicate times were removed:\n'
+                f'{(np.diff(tinv) == 0).nonzero()[0] + 1}'
+            )
         
         # aircraft nav information
         lat = xr.DataArray(
@@ -3286,6 +3356,22 @@ class Cpl(Lidar):
         )
         
         # lidar information
+        ltb = xr.DataArray(
+            data = np.ma.masked_where(
+                hdf['layer_descriptor']['Layer_Top_Bin'][tind, :].T <= -999.,
+                hdf['layer_descriptor']['Layer_Top_Bin'][tind, :].T
+            ),
+            dims = ['layer', 'time'],
+            coords = dict(
+                layer = np.arange(10),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Profile bin for the top portion of each identified layer',
+                units='#'
+            )
+        )
         lta = xr.DataArray(
             data = np.ma.masked_where(
                 hdf['layer_descriptor']['Layer_Top_Altitude'][tind, :].T <= -999.,
@@ -3342,6 +3428,38 @@ class Cpl(Lidar):
                 units='degrees_Celsius'
             )
         )
+        lbb = xr.DataArray(
+            data = np.ma.masked_where(
+                hdf['layer_descriptor']['Layer_Base_Bin'][tind, :].T <= -999.,
+                hdf['layer_descriptor']['Layer_Base_Bin'][tind, :].T
+            ).astype(int),
+            dims = ['layer', 'time'],
+            coords = dict(
+                layer = np.arange(10),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Profile bin for the bottom portion of each identified layer',
+                units='#'
+            )
+        )
+        lba = xr.DataArray(
+            data = np.ma.masked_where(
+                hdf['layer_descriptor']['Layer_Base_Altitude'][tind, :].T <= -999.,
+                1000. * hdf['layer_descriptor']['Layer_Base_Altitude'][tind, :].T
+            ),
+            dims = ['layer', 'time'],
+            coords = dict(
+                layer = np.arange(10),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Altitude for the bottom portion of each identified layer',
+                units='m'
+            )
+        )
         nlay = xr.DataArray(
             data = hdf['layer_descriptor']['Number_Layers'][tind],
             dims = ['time'],
@@ -3368,10 +3486,13 @@ class Cpl(Lidar):
         # construct the dataset
         ds = xr.Dataset(
             data_vars={
+                'layer_top_bin': ltb,
                 'layer_top_altitude': lta,
                 'layer_top_temperature': ltt,
                 'cloud_top_altitude': cta,
                 'cloud_top_temperature': ctt,
+                'layer_base_bin': lbb,
+                'layer_base_altitude': lba,
                 'number_layers': nlay
             },
             coords={
