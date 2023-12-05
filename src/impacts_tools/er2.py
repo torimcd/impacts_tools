@@ -146,12 +146,23 @@ class Radar(ABC):
         # remove beams (time dim) that aren't in HIWRAP data (typically every other beam)
         self.data = self.data.sel(time=data_reference.data.time)
         
-        # find nearest CRS/EXRAD gate corresponding to HIWRAP range gates
-        # CRS/EXRAD height may be offset by 20-25 m (vertical sampling resolution)
-        # not a big deal as native vertical resolution much larger (> 100 m )
-        return self.data.interp(
-            range=data_reference.data.range, method='nearest', assume_sorted=True
-        )
+        # find nearest CRS/EXRAD gate corresponding to HIWRAP height
+        # need to iterate through each beam as height array varies with time
+        rad_interp_dummy = self.data.interp(
+            range=data_reference.data.range, method='nearest'#, assume_sorted=True
+        ) # preserve desired dim lengths, but will optimize interp below
+        vars_2d = list()
+        for var in rad_interp_dummy.data_vars: # only interp 2D vars
+            if rad_interp_dummy[var].ndim == 2:
+                vars_2d.append(var)
+        for idx in range(self.data.height.shape[1]): # time/beam loop
+            rad_interp_beam = self.data.isel(time=idx).swap_dims({'range': 'height'}).interp(
+                height=data_reference.data.height[:, idx].values, method='nearest'
+            ) # interp current beam based on HIWRAP gate altitudes
+            for var in vars_2d: # modify 2D var values for current beam
+                rad_interp_dummy[var].values[:, idx] = rad_interp_beam[var].values
+        rad_interp_dummy.height.values = data_reference.data.height.values # overwrite heights
+        return rad_interp_dummy
     
     def calc_cfad(self, vel_bins=None, alt_bins=None, band=None):
         """
@@ -283,7 +294,7 @@ class Lidar(ABC):
         return self.data.where(abs(self.data['er2_roll']) < max_roll)
 
 
-    def despeckle(self, data_array=None, sigma=1.):
+    def despeckle(self, data_array=None, sigma=0.2):
         """
         Despeckle the lidar data by applying a Gaussion filter with a given standard deviation
 
@@ -301,6 +312,42 @@ class Lidar(ABC):
 
         # np.isfinite returns values that are not NAN or INF
         return data_array.where(np.isfinite(temp_datafiltered))
+    
+    def qc_profile(self, data_array, cpl_layer_object):
+        """
+        QC the lidar profile by applying a mask based on the L2 layer information
+        """
+        mask = np.ones(self.data.height.shape).astype(int)
+        alts_top = cpl_layer_object.data.layer_top_altitude.interp_like(
+            self.data.time, method='nearest', kwargs={'fill_value': 'extrapolate'}
+        )
+        alts_base = cpl_layer_object.data.layer_base_altitude.interp_like(
+            self.data.time, method='nearest', kwargs={'fill_value': 'extrapolate'}
+        )
+        layers = cpl_layer_object.data.number_layers.interp_like(
+            self.data.time, method='nearest', kwargs={'fill_value': 'extrapolate'}
+        )
+        for prof in range(len(layers)):
+            nlayers = layers.values[prof]
+            if nlayers > 0.:
+                alts_top_temp = alts_top.values[:, prof]
+                alts_base_temp = alts_base.values[:, prof]
+                for lay in range(int(nlayers)):
+                    inds_good = (
+                        self.data.height.values[:, prof] >= alts_base_temp[lay]
+                    ) &  (self.data.height.values[:, prof] <= alts_top_temp[lay])
+                    mask[inds_good, prof] = 0
+        mask = xr.DataArray(
+            data = mask,
+            dims = ['gate', 'time'],
+            coords = dict(
+                gate = self.data.gate,
+                time = self.data.time,
+            )
+        )
+        
+        # return nan for pixels not residing within layers
+        return data_array.where(mask == 0)
     
     def trim_time_bounds(self, start_time=None, end_time=None, tres='1S'):
         """
@@ -796,7 +843,8 @@ class Crs(Radar):
         radar_range = hdf['Products']['Information']['Range'][:] # this is the second dimension on product data
 
         [alt2d, radar_range2d] = np.meshgrid(altitude, radar_range)
-        hght = alt2d - radar_range2d
+        dzdr2d = np.tile(np.atleast_2d(dzdr.values), (len(radar_range), 1)) # delta z [m] per range [m]
+        hght = alt2d + dzdr2d * radar_range2d
 
         height = xr.DataArray(
             data = hght[:],
@@ -829,8 +877,16 @@ class Crs(Radar):
             )   
         )
 
+        if dataset == '2023': # CRS spectrum width not in 2023 dataset
+            data_spw = np.ma.masked_invalid(
+                np.nan * np.zeros(hdf['Products']['Data']['dBZe'][:].T.shape)
+            )
+        else:
+            data_spw = np.ma.masked_invalid(
+                hdf['Products']['Data']['SpectrumWidth'][:].T
+            )
         width = xr.DataArray(
-            data = np.ma.masked_invalid(hdf['Products']['Data']['SpectrumWidth'][:].T),
+            data = data_spw,
             dims = ["range", "time"],
             coords = dict(
                 range = radar_range,
@@ -843,6 +899,22 @@ class Crs(Radar):
                 description=hdf['Products']['Information']['SpectrumWidth_description'][0].decode('UTF-8'),
                 units = hdf['Products']['Information']['SpectrumWidth_units'][0].decode('UTF-8')
             ) 
+        )
+        
+        ldr = xr.DataArray(
+            data = np.ma.masked_invalid(hdf['Products']['Data']['LDR'][:].T),
+            dims = ["range", "time"],
+            coords = dict(
+                range = radar_range,
+                height = height,
+                time = time_dt64,
+                distance = nomdist,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description=hdf['Products']['Information']['LDR_description'][0].decode('UTF-8'),
+                units = hdf['Products']['Information']['LDR_units'][0].decode('UTF-8')
+            )
         )
 
         if 'Velocity_corrected' in list(hdf['Products']['Data'].keys()):
@@ -972,6 +1044,7 @@ class Crs(Radar):
                 "dbz": dbz[:, time_inds],
                 "vel": vel[:, time_inds],
                 "width": width[:, time_inds],
+                "ldr": ldr[:, time_inds],
                 "vel_horiz_offset": vel_horizwind_offset[:, time_inds],
                 "mask_copol": mask_copol[:, time_inds],
                 "horizontal_resolution": horiz_resolution[:],
@@ -1040,6 +1113,30 @@ class Crs(Radar):
         self.data['kw_ice'] : xr.DataArray()
             Two-way path integrated attenuation due to ice scattering [dB]
         """
+        # attempt to remove P-3 skin paints that may affect correction
+        # loosely follows match.Match.qc_radar()
+        hiwrap_qc = hiwrap.data.copy()
+        mask = np.ones(hiwrap_qc.height.shape, dtype=bool)
+        mask[
+            (~np.isnan(hiwrap_qc['dbz_ku'].values)) &
+            (hiwrap_qc['height'].values >= 500.)] = False
+        mask = xr.DataArray(
+            data = mask,
+            dims = ['range', 'time'],
+            coords = dict(
+                range = hiwrap_qc.range,
+                time = hiwrap_qc.time
+            )
+        )
+        hiwrap_qc = hiwrap_qc.where(~mask) # set nan outside of these alts
+        dbz_std = hiwrap.data.dbz_ku.rolling(
+            range=9, time=3, center=True
+        ).std(skipna=True) # dbz stdev using rolling window
+        spw_p01 = np.nanpercentile(hiwrap_qc.width_ku.values, 1)
+        hiwrap_qc = hiwrap_qc.where(
+            (dbz_std <= 5.) & (hiwrap_qc.width_ku > spw_p01)
+        ) # additional masking based on these thresholds
+                    
         # fit Kulie et al. (2014) relationship to a Z_ku-dependent func
         dbz_ku_lin = np.array([0., 2000., 4000., 6000., 8000.]) # mm**6 / m**-3
         ks_w_coeff = np.array([0., 7.5, 15.5, 23.75, 31.5]) # db / km
@@ -1048,7 +1145,7 @@ class Crs(Radar):
         ) # slope, intercept coeffs
         
         # calculate attenuation (k) per gate and clean up data
-        data_dbz_ku = hiwrap.data.dbz_ku.values
+        data_dbz_ku = hiwrap_qc.dbz_ku.values
         ks_w = ks_w_func(10. ** (data_dbz_ku / 10.)) # db / km
         ks_w = ks_w * 0.0265 # convert to db per gate
         if data_temperature is None: # clean up k values except for T > 0C
@@ -1259,7 +1356,7 @@ class Hiwrap(Radar):
             time_inds = np.where((time_dt64 != None))[0]
             
         # Time information for Ka-band data from 2022 deployment (separate file)
-        if dataset=='2022':
+        if dataset!='2020':
             time2_raw = hdf2['Time']['Data']['TimeUTC'][:]
             time2_dt = [
                 datetime(1970, 1, 1) + timedelta(seconds=time2_raw[i])
@@ -1443,7 +1540,8 @@ class Hiwrap(Radar):
         radar_range = hdf['Products']['Information']['Range'][:] # this is the second dimension on product data
 
         [alt2d, radar_range2d] = np.meshgrid(altitude, radar_range)
-        hght = alt2d - radar_range2d
+        dzdr2d = np.tile(np.atleast_2d(dzdr.values), (len(radar_range), 1)) # delta z [m] per range [m]
+        hght = alt2d + dzdr2d * radar_range2d
 
         height = xr.DataArray(
             data = hght[:],
@@ -2340,7 +2438,8 @@ class Exrad(Radar):
 
 
         [alt2d, radar_range2d] = np.meshgrid(altitude, radar_range)
-        hght = alt2d - radar_range2d
+        dzdr2d = np.tile(np.atleast_2d(dzdr.values), (len(radar_range), 1)) # delta z [m] per range [m]
+        hght = alt2d + dzdr2d * radar_range2d
 
         height = xr.DataArray(
             data = hght[:],
@@ -2628,7 +2727,7 @@ class Cpl(Lidar):
     """
 
     def __init__(self, filepath, start_time=None, end_time=None, max_roll=None,
-                 atb_sigma=None, l1b_trim_ref=None, l2_cloudtop_ref=None):
+                 atb_sigma=None, l1b_trim_ref=None, l2_cloudtop_ref=None, l2_qc_ref=None):
         # read the raw data
         if 'ATB' in filepath:
             self.name = 'CPL ATB'
@@ -2725,7 +2824,15 @@ class Cpl(Lidar):
         if (l2_cloudtop_ref is not None) and (
                     (self.name == 'CPL ATB') or (self.name == 'CPL L2 Profiles')):
                 self.data = self.get_cloudtop_properties(l2_cloudtop_ref)
-            
+                
+        # qc profile (2D) data based on L2 Layer information/data
+        if (l2_qc_ref is not None) and (self.name == 'CPL ATB'):
+            for var in ['atb_1064', 'atb_532', 'atb_355']:
+                self.data[var] = self.qc_profile(self.data[var], l2_qc_ref)
+        elif (l2_qc_ref is not None) and (self.name == 'CPL L2 Profiles'):
+            for var in ['ext_1064', 'ext_532', 'ext_355', 'dpol_1064']:
+                self.data[var] = self.qc_profile(self.data[var], l2_qc_ref)
+        
         # mask values when aircraft is rolling
         if (max_roll is not None) and ('er2_roll' in self.data.data_vars):
             self.data = self.mask_roll(max_roll)
@@ -2933,7 +3040,7 @@ class Cpl(Lidar):
         
         return ds.drop_duplicates('time')
     
-    def readfile_l2pro(self, filepath, start_time=None, end_time=None):
+    def readfile_l2pro(self, filepath, start_time=None, end_time=None, qc=True):
         """
         Reads the CPL L2 profile data file and unpacks the fields into an xarray.Dataset
 
@@ -2946,6 +3053,8 @@ class Cpl(Lidar):
             The initial time of interest
         end_time : np.datetime64 or None
             The final time of interest
+        qc: bool
+            Whether (True) to mask the depolarization ratio by the non-nan extinction
         
         Returns
         -------
@@ -2963,7 +3072,14 @@ class Cpl(Lidar):
                 seconds=int((86400. * (jday[i, 1] - 1)).round())
             ) for i in range(jday.shape[0])], dtype='datetime64[ms]'
         )
-        dt, tind = np.unique(dt, return_index=True) # ignore duplicate times
+        dt, tind, tinv = np.unique(
+            dt, return_index=True, return_inverse=True
+        ) # ignore duplicate times
+        if len(dt) < len(tinv): # diagnostic - print original inds to duplicates
+            print(
+                'CPL L2 profile indices where duplicate times were removed:\n'
+                f'{(np.diff(tinv) == 0).nonzero()[0] + 1}'
+            )
         dt_start = xr.DataArray(
             data=np.array(
                 [date + timedelta(
@@ -2998,7 +3114,7 @@ class Cpl(Lidar):
             )
         )
         lon = xr.DataArray(
-            data = hdf['geolocation']['CPL_Longitude'][tind ,1],
+            data = hdf['geolocation']['CPL_Longitude'][tind, 1],
             dims = ['time'],
             coords = dict(time=dt),
             attrs = dict(
@@ -3072,10 +3188,9 @@ class Cpl(Lidar):
             )
         )
         dpol_data = np.ma.masked_where(
-            np.isnan(ext1064.values),
+            hdf['profile']['Total_Depolarization_Ratio_1064'][:, tind] < 0.,
             hdf['profile']['Total_Depolarization_Ratio_1064'][:, tind]
         )
-        dpol_data = np.ma.masked_where(dpol_data < 0., dpol_data)
         dpol1064 = xr.DataArray(
             data = dpol_data,
             dims = ['gate', 'time'],
@@ -3211,7 +3326,14 @@ class Cpl(Lidar):
                 seconds=int((86400. * (jday[i, 1] - 1)).round())
             ) for i in range(jday.shape[0])], dtype='datetime64[ms]'
         )
-        dt, tind = np.unique(dt, return_index=True) # ignore duplicate times
+        dt, tind, tinv = np.unique(
+            dt, return_index=True, return_inverse=True
+        ) # ignore duplicate times
+        if len(dt) < len(tinv): # diagnostic - print original inds to duplicates
+            print(
+                'CPL L2 layer indices where duplicate times were removed:\n'
+                f'{(np.diff(tinv) == 0).nonzero()[0] + 1}'
+            )
         
         # aircraft nav information
         lat = xr.DataArray(
@@ -3234,6 +3356,22 @@ class Cpl(Lidar):
         )
         
         # lidar information
+        ltb = xr.DataArray(
+            data = np.ma.masked_where(
+                hdf['layer_descriptor']['Layer_Top_Bin'][tind, :].T <= -999.,
+                hdf['layer_descriptor']['Layer_Top_Bin'][tind, :].T
+            ),
+            dims = ['layer', 'time'],
+            coords = dict(
+                layer = np.arange(10),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Profile bin for the top portion of each identified layer',
+                units='#'
+            )
+        )
         lta = xr.DataArray(
             data = np.ma.masked_where(
                 hdf['layer_descriptor']['Layer_Top_Altitude'][tind, :].T <= -999.,
@@ -3290,6 +3428,38 @@ class Cpl(Lidar):
                 units='degrees_Celsius'
             )
         )
+        lbb = xr.DataArray(
+            data = np.ma.masked_where(
+                hdf['layer_descriptor']['Layer_Base_Bin'][tind, :].T <= -999.,
+                hdf['layer_descriptor']['Layer_Base_Bin'][tind, :].T
+            ).astype(int),
+            dims = ['layer', 'time'],
+            coords = dict(
+                layer = np.arange(10),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Profile bin for the bottom portion of each identified layer',
+                units='#'
+            )
+        )
+        lba = xr.DataArray(
+            data = np.ma.masked_where(
+                hdf['layer_descriptor']['Layer_Base_Altitude'][tind, :].T <= -999.,
+                1000. * hdf['layer_descriptor']['Layer_Base_Altitude'][tind, :].T
+            ),
+            dims = ['layer', 'time'],
+            coords = dict(
+                layer = np.arange(10),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Altitude for the bottom portion of each identified layer',
+                units='m'
+            )
+        )
         nlay = xr.DataArray(
             data = hdf['layer_descriptor']['Number_Layers'][tind],
             dims = ['time'],
@@ -3316,10 +3486,13 @@ class Cpl(Lidar):
         # construct the dataset
         ds = xr.Dataset(
             data_vars={
+                'layer_top_bin': ltb,
                 'layer_top_altitude': lta,
                 'layer_top_temperature': ltt,
                 'cloud_top_altitude': cta,
                 'cloud_top_temperature': ctt,
+                'layer_base_bin': lbb,
+                'layer_base_altitude': lba,
                 'number_layers': nlay
             },
             coords={
