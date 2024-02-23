@@ -2903,10 +2903,16 @@ class Psd(Instrument):
                 self.data['sv']).sum(dim='size') / (
                 mass_bf / self.data['sv']
             ).sum(dim='size') # mass-weighted mean D from Chase et al. (2020) (mm)
-            dmelt_bf_temp = ((6. * mass_particle) / (np.pi * 0.997)) ** (1. / 3.)
-            nw_bf_temp = np.log10((1e5) * (4.**4 / 6) * (
-                dmelt_bf_temp**3 * self.data.ND * self.data.bin_width).sum(dim='size') ** 5 / (
-                dmelt_bf_temp**4 * self.data.ND * self.data.bin_width).sum(dim='size') ** 4)
+            dmelt_bf_temp = ((6. * mass_particle) / (np.pi * 0.997)) ** (1. / 3.) # (cm)
+            nw_bf_temp = np.log10(
+                (1e5) * (4.**4 / 6)
+                * ((dmelt_bf_temp**3 * self.data.ND * self.data.bin_width).sum(dim='size') ** 5)
+                / ((dmelt_bf_temp**4 * self.data.ND * self.data.bin_width).sum(dim='size') ** 4)
+            )
+            dml_bf_temp = 10. * (
+                (dmelt_bf_temp * mass_bf /  self.data['sv']).sum(dim='size')
+                / (mass_bf / self.data['sv']).sum(dim='size')
+            ) # liquid-equivalent Dm from Chase et al. (2022) (mm)
             ar_bf_temp = (
                 self.data['area_ratio'] * mass_bf / self.data['sv']).sum(dim='size') / (
                 mass_bf / self.data['sv']
@@ -2955,9 +2961,15 @@ class Psd(Instrument):
                 mass_hy / self.data['sv']
             ).sum(dim='size') # mass-weighted mean D from Chase et al. (2020) (mm)
             dmelt_hy_temp = ((6. * mass_particle) / (np.pi * 0.997)) ** (1. / 3.)
-            nw_hy_temp = np.log10((1e5) * (4.**4 / 6) * (
-                dmelt_hy_temp**3 * self.data.ND * self.data.bin_width).sum(dim='size') ** 5 / (
-                dmelt_hy_temp**4 * self.data.ND * self.data.bin_width).sum(dim='size') ** 4)
+            nw_hy_temp = np.log10(
+                (1e5) * (4.**4 / 6)
+                * ((dmelt_bf_temp**3 * self.data.ND * self.data.bin_width).sum(dim='size') ** 5)
+                / ((dmelt_bf_temp**4 * self.data.ND * self.data.bin_width).sum(dim='size') ** 4)
+            )
+            dml_hy_temp = 10. * (
+                (dmelt_hy_temp * mass_hy /  self.data['sv']).sum(dim='size')
+                / (mass_hy / self.data['sv']).sum(dim='size')
+            ) # liquid-equivalent Dm from Chase et al. (2022) (mm)
             ar_hy_temp = (
                 self.data['area_ratio'] * mass_hy / self.data['sv']).sum(dim='size') / (
                 mass_hy / self.data['sv']
@@ -3239,6 +3251,15 @@ class Psd(Instrument):
                 relationship='m = 0.00196 * D ** 1.9',
                 units = 'mm')
         )
+        dml_bf = xr.DataArray(
+            data = dml_bf_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Liquid-equivalent mass-weighted mean diameter [Brown and Francis (1995) m-D relationship]',
+                relationship='m = 0.00196 * D ** 1.9',
+                units = 'mm')
+        )
         dmm_bf = xr.DataArray(
             data = dmm_bf_temp,
             dims = 'time',
@@ -3326,6 +3347,15 @@ class Psd(Instrument):
             coords = dict(time=self.data.time),
             attrs = dict(
                 description='Mass-weighted mean diameter [Heymsfield et al. (2010) m-D relationship]',
+                relationship='m = 0.00528 * D ** 2.1',
+                units = 'mm')
+        )
+        dml_hy = xr.DataArray(
+            data = dml_hy_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Liquid-equivalent mass-weighted mean diameter [Heymsfield et al. (2010) m-D relationship]',
                 relationship='m = 0.00528 * D ** 2.1',
                 units = 'mm')
         )
@@ -3457,6 +3487,7 @@ class Psd(Instrument):
                 'lambda_bf': lam_bf, 'lambda_hy': lam_hy, 'lambda_ls': lam_ls,
                 'iwc_bf': iwc_bf, 'iwc_hy': iwc_hy, 'iwc_ls': iwc_ls,
                 'dm_bf': dm_bf, 'dm_hy': dm_hy, 'dm_ls': dm_ls,
+                'dm_liq_bf': dml_bf, 'dm_liq_hy': dml_hy,
                 'dmm_bf': dmm_bf, 'dmm_hy': dmm_hy, 'dmm_ls': dmm_ls,
                 'rhoe_bf': rhoe_bf, 'rhoe_hy': rhoe_hy, 'rhoe_ls': rhoe_ls,
                 'area_ratio_mean_n': ar_nw, 'area_ratio_mean_bf': ar_bf,
@@ -3466,9 +3497,15 @@ class Psd(Instrument):
             }
         else:
             data_vars = {
-                'n': n, 'N0_bf': N0_bf, 'N0_hy': N0_hy, 'mu_bf': mu_bf, 'mu_hy': mu_hy,
-                'lambda_bf': lam_bf, 'lambda_hy': lam_hy, 'iwc_bf': iwc_bf, 'iwc_hy': iwc_hy,
-                'dm_bf': dm_bf, 'dm_hy': dm_hy, 'dmm_bf': dmm_bf, 'dmm_hy': dmm_hy,
+                'n': n,
+                'N0_bf': N0_bf, 'N0_hy': N0_hy,
+                'mu_bf': mu_bf, 'mu_hy': mu_hy,
+                'lambda_bf': lam_bf, 'lambda_hy': lam_hy,
+                'nw_bf': nw_bf, 'nw_hy': nw_hy,
+                'iwc_bf': iwc_bf, 'iwc_hy': iwc_hy,
+                'dm_bf': dm_bf, 'dm_hy': dm_hy,
+                'dm_liq_bf': dml_bf, 'dm_liq_hy': dml_hy,
+                'dmm_bf': dmm_bf, 'dmm_hy': dmm_hy,
                 'rhoe_bf': rhoe_bf, 'rhoe_hy': rhoe_hy,
                 'area_ratio_mean_n': ar_nw, 'area_ratio_mean_bf': ar_bf, 'area_ratio_mean_hy': ar_hy,
                 'aspect_ratio_mean_n': asr_nw, 'aspect_ratio_mean_bf': asr_bf, 'aspect_ratio_mean_hy': asr_hy
