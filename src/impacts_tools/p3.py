@@ -857,13 +857,23 @@ class Instrument(ABC):
                 if 'HVPS' in self.instruments:
                     mean_vars.append('active_time_hvps')
                     
-                ds_sum_vars = self.data[sum_vars].resample(time=tres).sum(
-                    skipna=True, keep_attrs=True)
+                ds_sum_vars = self.data[sum_vars].resample(time=tres).reduce(
+                    np.nansum, keep_attrs=True)
+                
                 ds_mean_nan_vars = self.data[mean_nan_vars].fillna(0.).resample(time=tres).mean(
                     skipna=True, keep_attrs=True)
-                ds_mean_nan_vars = ds_mean_nan_vars.where(ds_mean_nan_vars != 0.)
-                ds_mean_vars = self.data[mean_vars].resample(time=tres).mean(
-                    skipna=True, keep_attrs=True)
+                ds_mean_nan_vars['ND'].values = (
+                    ds_sum_vars['count'] / ds_sum_vars['sv'] / self.data['bin_width']
+                ).values
+                if 'count_habit' in self.data.data_vars:
+                    ds_mean_nan_vars['ND_habit'].values = (
+                        ds_sum_vars['count_habit'] / ds_sum_vars['sv'] / self.data['bin_width']
+                    ).values
+                ds_mean_nan_vars = ds_mean_nan_vars.where(ds_mean_nan_vars > 0.)
+                
+                ds_mean_vars = self.data[mean_vars].resample(time=tres).reduce(
+                    np.nanmean, keep_attrs=True)
+
                 if 'count_habit' in self.data.data_vars:
                     ds_downsampled = xr.merge(
                         [ds_sum_vars, ds_mean_nan_vars, ds_mean_vars]
@@ -2342,6 +2352,15 @@ class Psd(Instrument):
         else: # both 2D-S and HVPS available, add the probe active time for each
             ds_merged['active_time_2ds'] = ds_list[0]['active_time']
             ds_merged['active_time_hvps'] = ds_list[1]['active_time']
+            
+        # final ND correction
+        ds_merged['ND'].values = (
+            ds_merged['count'] / ds_merged['sv'] / ds_merged['bin_width']
+        ).values
+        if 'count_habit' in ds_merged.data_vars:
+            ds_merged['ND_habit'].values = (
+                ds_merged['count_habit'] / ds_merged['sv'] / ds_merged['bin_width']
+            ).values
                         
         return ds_merged
     
