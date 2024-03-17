@@ -107,9 +107,9 @@ class P3():
         """
         xarray.Dataset of P-3 meteorological and navigation variables and attributes
         Dimensions:
-            - time: np.array(np.datetime64[ms]) - The UTC time stamp
+            - time: np.array(np.datetime64[ns]) - The UTC time stamp
         Coordinates:
-            - time (time): np.array(np.datetime64[ms]) - The UTC time stamp
+            - time (time): np.array(np.datetime64[ns]) - The UTC time stamp
         Variables:
             - lat (time): xarray.DataArray(float) - Latitude (degrees)
             - lon (time): xarray.DataArray(float) - Longitude (degrees)
@@ -279,7 +279,7 @@ class P3():
             # compute time
             time = np.array([
                 np.datetime64(date) + np.timedelta64(int(readfile['time'][i]), 's')
-                for i in range(len(readfile['time']))], dtype='datetime64[ms]'
+                for i in range(len(readfile['time']))], dtype='datetime64[ns]'
             )
 
             # populate dataset attributes
@@ -1008,11 +1008,11 @@ class Tamms(Instrument):
         """
         xarray.Dataset of TAMMS variables and attributes
         Dimensions:
-            - time_raw: np.array(np.datetime64[ms]) - The UTC time stamp at the native resolution (20 Hz)
-            - time: np.array(np.datetime64[ms]) - The UTC time start of the N-s upsampled interval
+            - time_raw: np.array(np.datetime64[ns]) - The UTC time stamp at the native resolution (20 Hz)
+            - time: np.array(np.datetime64[ns]) - The UTC time start of the N-s upsampled interval
         Coordinates:
-            - time_raw (time_raw): np.array(np.datetime64[ms]) - The UTC time stamp  at the native resolution (20 Hz)
-            - time (time): np.array(np.datetime64[ms]) - The UTC time start of the N-s upsampled interval
+            - time_raw (time_raw): np.array(np.datetime64[ns]) - The UTC time stamp  at the native resolution (20 Hz)
+            - time (time): np.array(np.datetime64[ns]) - The UTC time start of the N-s upsampled interval
         Variables:
             - lat_raw (time_raw): xarray.DataArray(float) - Latitude (degrees)
             - lon_raw (time_raw): xarray.DataArray(float) - Longitude (degrees)
@@ -1125,7 +1125,7 @@ class Tamms(Instrument):
         time = np.array([
             np.datetime64(date) + np.timedelta64(int(sec[i]), 's') +
             np.timedelta64(int(np.round(1000. * sec_frac[i])), 'ms')
-            for i in range(len(readfile['time']))], dtype='datetime64[ms]'
+            for i in range(len(readfile['time']))], dtype='datetime64[ns]'
         )
 
         # populate data arrays
@@ -1296,7 +1296,7 @@ class Cdp(Instrument):
             - bin_left (size): np.array(np.float64) - Size bin left endpoint (um)
             - bin_right (size): np.array(np.float64) - Size bin right endpoint (um)
             - bin_width (size): np.array(np.float64) - Size bin width (um)
-            - time (time): np.array(np.datetime64[ms]) - The UTC time start of the N-s upsampled interval
+            - time (time): np.array(np.datetime64[ns]) - The UTC time start of the N-s upsampled interval
         Variables:
             - count (size, time): xarray.DataArray(float) - Drop count per size bin (#)
             - ND (size, time): xarray.DataArray(float) - Number distribution function (DSD) (cm-4)
@@ -1377,7 +1377,7 @@ class Cdp(Instrument):
                 # compute time
                 time = np.array([
                     np.datetime64(date) + np.timedelta64(int(data['time'][i]), 's')
-                    for i in range(len(data['time']))], dtype='datetime64[ms]'
+                    for i in range(len(data['time']))], dtype='datetime64[ns]'
                 )
                 
                 # populate data arrays common to both datastreams (size bin vars)
@@ -1550,9 +1550,9 @@ class Und(Instrument):
         xarray.Dataset of UND summary variables and attributes.
         Some instruments (WCM, RICE-2) not available all deployments.
         Dimensions:
-            - time: np.array(np.datetime64[ms]) - The UTC time start of the N-s upsampled interval
+            - time: np.array(np.datetime64[ns]) - The UTC time start of the N-s upsampled interval
         Coordinates:
-            - time (time): np.array(np.datetime64[ms]) - The UTC time start of the N-s upsampled interval
+            - time (time): np.array(np.datetime64[ns]) - The UTC time start of the N-s upsampled interval
         Variables:
             - lon (time) : xarray.DataArray(float) - Aircraft longitude (degrees_east)
             - lat (time) : xarray.DataArray(float) - Aircraft latitude (degrees_north)
@@ -1664,7 +1664,7 @@ class Und(Instrument):
         time = np.array([
             np.datetime64(date) + np.timedelta64(int(sec[i]), 's') +
             np.timedelta64(int(np.round(1000. * sec_frac[i])), 'ms')
-            for i in range(len(readfile['time']))], dtype='datetime64[ms]'
+            for i in range(len(readfile['time']))], dtype='datetime64[ns]'
         )
 
         # populate data arrays
@@ -3173,13 +3173,14 @@ class Psd(Instrument):
         if calc_gamma_params:
             N0_bf_temp = np.ma.masked_where(N0_bf_temp == -999., N0_bf_temp)
             N0_hy_temp = np.ma.masked_where(N0_hy_temp == -999., N0_hy_temp)
-            N0_ls_temp = np.ma.masked_where(N0_ls_temp == -999., N0_ls_temp)
             mu_bf_temp = np.ma.masked_where(mu_bf_temp == -999., mu_bf_temp)
             mu_hy_temp = np.ma.masked_where(mu_hy_temp == -999., mu_hy_temp)
-            mu_ls_temp = np.ma.masked_where(mu_hy_temp == -999., mu_ls_temp)
             lam_bf_temp = np.ma.masked_where(lam_bf_temp == -999., lam_bf_temp)
             lam_hy_temp = np.ma.masked_where(lam_hy_temp == -999., lam_hy_temp)
-            lam_ls_temp = np.ma.masked_where(lam_hy_temp == -999., lam_ls_temp)
+            if compute_ls:
+                N0_ls_temp = np.ma.masked_where(N0_ls_temp == -999., N0_ls_temp)
+                mu_ls_temp = np.ma.masked_where(mu_hy_temp == -999., mu_ls_temp)
+                lam_ls_temp = np.ma.masked_where(lam_hy_temp == -999., lam_ls_temp)
         else:
             N0_bf_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
             N0_hy_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
