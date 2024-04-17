@@ -1252,9 +1252,6 @@ class Tamms(Instrument):
 
         return ds
 
-# ====================================== #
-# CDP Distributions
-# ====================================== #
 class Cdp(Instrument):
     """
     A class to represent the CDP flown on the P-3 during the IMPACTS field campaign.
@@ -1990,10 +1987,198 @@ class Und(Instrument):
         )
 
         return ds
+    
+class Wisper(Instrument):
+    """
+    A class to represent the WISPER instruments summary on the P-3 during the IMPACTS field campaign.
+    Inherits from Instrument()
+    
+    Parameters
+    ----------
+    filepath: str
+        File path to the TAMMS data file
+    p3_object: impacts_tools.p3.P3() object or None
+        The optional P-3 Met-Nav object to automatically trim and average the TAMMS data
+    start_time: np.datetime64 or None
+        The initial time of interest eg. if looking at a single flight leg
+    end_time: np.datetime64 or None
+        The final time of interest eg. if looking at a single flight leg
+    tres: str
+        The time interval to average over (e.g., '5S' for 5 seconds)
+    """
+
+    def __init__(self, filepath, date, p3_object=None, start_time=None, end_time=None, tres='1S'):
+        self.name = 'WISPER Probe'
         
-# ====================================== #
-# PSDs
-# ====================================== #
+        # read the raw data
+        self.data = self.readfile(filepath, date)
+        """
+        xarray.Dataset of Wisper variables and attributes. 
+        Dimensions:
+            - time: np.array(np.datetime64[ms]) - The UTC time start of the N-s upsampled interval
+        Coordinates:
+            - time (time): np.array(np.datetime64[ms]) - The UTC time start of the N-s upsampled interval
+        Variables:
+            - cwc (time) : xarray.DataArray(float) - CWC, g/(m^3), condensed water concentration (ice + liquid water)
+
+        """
+        
+        # trim dataset to P-3 time bounds or from specified start/end
+        if p3_object is not None:
+            self.data, tres = self.trim_to_p3(p3_object)
+        elif (start_time is not None) or (end_time is not None):
+            self.data = self.trim_time_bounds(start_time, end_time, tres)
+            
+        # downsample data if specified by the P-3 Met-Nav data or tres argument
+        self.data = self.downsample(tres)
+        
+    def readfile(self, filepath, date):
+        """
+        Reads the WISPER data file and unpacks the fields into an xarray.Dataset
+
+        Parameters
+        ----------
+        filepath : str
+            Path to the data file
+        date: str
+            Flight start date in YYYY-mm-dd format
+        p3_object: impacts_tools.p3.P3() or None
+            P-3 Met-Nav object to optionally contrain times and average data
+        start_time : np.datetime64 or None
+            The initial time of interest
+        end_time : np.datetime64 or None
+            The final time of interest
+        tres: str
+            The time interval to average over (e.g., '5S' for 5 seconds)
+
+        Returns
+        -------
+        data : xarray.Dataset
+            The unpacked dataset
+        """
+
+        # get header info following the NASA AMES format
+        header = parse_header(open(filepath, 'r', encoding = 'latin1'), date)
+
+        # parse the data
+        data_raw = np.genfromtxt(
+            filepath, delimiter=',', skip_header=int(header['NLHEAD']),
+            missing_values=header['VMISS'], usemask=True, filling_values=np.nan, encoding = 'latin1'
+        )
+        
+
+        # construct dictionary of variable data and metadata
+        readfile = {}
+        for jj, unit in enumerate(header['VUNIT']):
+            header['VUNIT'][jj] = unit.split(',')[0]
+        for jj, name in enumerate(header['VNAME']):
+            readfile[name] = np.array(data_raw[:, jj] * header['VSCAL'][jj])
+            readfile[name][readfile[name]==header['VMISS'][jj]] = np.nan
+
+        # populate dataset attributes
+        p3_attrs = {
+            'Experiment': 'IMPACTS',
+            'Platform': 'P-3',
+            'Mission PI': 'Lynn McMurdie (lynnm@uw.edu)'}
+        instrum_info_counter = 1
+        for ii, comment in enumerate(header['NCOM'][:-1]): # add global attrs
+            parsed_comment = comment.split(':')
+            if len(parsed_comment) > 1:
+                p3_attrs[parsed_comment[0]] = parsed_comment[1][1:]
+            else: # handles multiple instrument info lines in *_R0.ict files
+                instrum_info_counter += 1
+                p3_attrs[
+                    'INSTRUMENT_INFO_'+str(instrum_info_counter)] = parsed_comment[0][1:]
+
+        # compute time
+        sec_frac, sec = np.modf(readfile['time'])
+        time = np.array([
+            np.datetime64(date) + np.timedelta64(int(sec[i]), 's') +
+            np.timedelta64(int(np.round(1000. * sec_frac[i])), 'ms')
+            for i in range(len(readfile['time']))], dtype='datetime64[ms]'
+        )
+
+        cwc_wisper = xr.DataArray(
+            data = np.ma.masked_invalid(
+                readfile['CWC']
+            ),
+            dims = 'time',
+            coords = dict(time = time),
+            attrs = dict(
+                description='CWC, g/(m^3), condensed water concentration (ice + liquid water)',
+                units='g m-3'))
+
+        h20_vap_wisper = xr.DataArray(
+            data = np.ma.masked_invalid(
+                readfile['H2O_VAP']
+            ),
+            dims = 'time',
+            coords = dict(time = time),
+            attrs = dict(
+                description='H2O_VAP, ppm, water vapor mixing ratio',
+                units='ppm'))
+
+        deltad_c_wisper = xr.DataArray(
+            data = np.ma.masked_invalid(
+                readfile['DELTAD_C']
+            ),
+            dims = 'time',
+            coords = dict(time = time),
+            attrs = dict(
+                description='DELTAD_C, permil, HDO/H2(16)O ratio in condensed water',
+                units='permil'))
+
+        deltao18_c_wisper = xr.DataArray(
+            data = np.ma.masked_invalid(
+                readfile['DELTAO18_C']
+            ),
+            dims = 'time',
+            coords = dict(time = time),
+            attrs = dict(
+                description='DELTAO18_C, permil, H2(18)O/H2(16)O ratio in condensed water',
+                units='permil'))
+
+        deltad_v_wisper = xr.DataArray(
+            data = np.ma.masked_invalid(
+                readfile['DELTAD_V']
+            ),
+            dims = 'time',
+            coords = dict(time = time),
+            attrs = dict(
+                description='DELTAD_V, permil, HDO/H2(16)O ratio in water vapor',
+                units='permil'))
+        
+        deltao18_v_wisper = xr.DataArray(
+            data = np.ma.masked_invalid(
+                readfile['DELTAO18_V']
+            ),
+            dims = 'time',
+            coords = dict(time = time),
+            attrs = dict(
+                description='DELTAO18_V, permil, H2(18)O/H2(16)O ratio in water vapor',
+                units='permil'))
+
+        data_vars = {
+            'cwc_wisper': cwc_wisper,
+            'h20_vap_wisper': h20_vap_wisper,
+            'deltad_c_wisper': deltad_c_wisper,
+            'deltao18_c_wisper': deltao18_c_wisper,
+            'deltad_v_wisper': deltad_v_wisper,
+            'deltao18_v_wisper': deltao18_v_wisper
+
+        }
+ 
+        # put everything together into an XArray Dataset
+        ds = xr.Dataset(
+            data_vars = data_vars,
+            coords={
+                'time': time
+            },
+            attrs=p3_attrs
+        )
+
+        return ds
+
 class Psd(Instrument):
     """
     A class to represent the PSDs from optical array probes flown on the P-3 during the IMPACTS field campaign.
@@ -2140,16 +2325,34 @@ class Psd(Instrument):
                         data['habitsd'].values.T) * np.tile(
                         np.moveaxis(np.atleast_3d(sv_temp), -1, 0), (10, 1, 1)) * np.tile(
                         np.atleast_3d(bin_width), (10, 1, sv_temp.shape[1]))
-                    count_habit_temp = np.array([
-                        count_habit_raw[3, :, :], count_habit_raw[0, :, :],
-                        np.nansum(count_habit_raw[1:3, :, :], axis=0),
-                        count_habit_raw[4, :, :], count_habit_raw[5, :, :],
-                        count_habit_raw[6, :, :], count_habit_raw[7, :, :],
-                        count_habit_raw[8, :, :]])
+                    
                     ND_temp = np.ma.masked_where(
                         count_temp==0.,
                         count_temp / sv_temp / np.tile(np.atleast_2d(bin_width).T,
                                              (1, count_temp.shape[1])))
+                    if ('Habit_Scheme' in data.attrs) and (
+                            'Schima' in data.attrs['Habit_Scheme']): # new habit scheme
+                        count_habit_temp = np.array([
+                            count_habit_raw[3, :, :], count_habit_raw[0, :, :],
+                            count_habit_raw[1, :, :], count_habit_raw[4, :, :],
+                            count_habit_raw[5, :, :], count_habit_raw[6, :, :],
+                            count_habit_raw[7, :, :], count_habit_raw[8, :, :],
+                            count_habit_raw[2, :, :]])
+                        habits = [
+                            'Tiny', 'Spherical', 'Linear', 'Hexagonal', 'Irregular',
+                            'Graupel', 'Dendrite', 'Aggregate', 'Other'
+                        ]
+                    else: # legacy Holroyd habit; combine linear and oriented
+                        count_habit_temp = np.array([
+                            count_habit_raw[3, :, :], count_habit_raw[0, :, :],
+                            np.nansum(count_habit_raw[1:3, :, :], axis=0),
+                            count_habit_raw[4, :, :], count_habit_raw[5, :, :],
+                            count_habit_raw[6, :, :], count_habit_raw[7, :, :],
+                            count_habit_raw[8, :, :]])
+                        habits = [
+                            'Tiny', 'Spherical', 'Linear', 'Hexagonal', 'Irregular',
+                            'Graupel', 'Dendrite', 'Aggregate'
+                        ]
                     ND_habit_temp = np.ma.masked_where(
                         count_habit_temp==0.,
                         count_habit_temp / sv_temp /
@@ -2159,13 +2362,13 @@ class Psd(Instrument):
                                )
                     )
                     ar_temp = data['mean_area_ratio'].values.T
-                    asr_temp = data['mean_aspect_ratio_ellipse'].values.T
+                    if 'mean_aspect_ratio_ellipse' in data.data_vars:
+                        asr_temp = data['mean_aspect_ratio_ellipse'].values.T
+                    else:
+                        asr_temp = np.nan * np.zeros(ar_temp.shape)
                     active_time_temp = data['sum_IntArr'].values
                 
                 # establish the data arrays
-                habits = [
-                    'Tiny', 'Spherical', 'Linear', 'Hexagonal', 'Irregular',
-                    'Graupel', 'Dendrite', 'Aggregate']
                 bin_mid = xr.DataArray(
                     data=bin_mid, dims = 'size',
                     attrs = dict(
