@@ -465,6 +465,9 @@ class Lidar(ABC):
                 if 'atb' in var:
                     description = f'Cloud top attenuated backscatter at {var.split("_")[-1]} nm'
                     units = 'km**-1 sr**-1'
+                elif 'pbsc' in var:
+                    description = f'Cloud top particulate backscatter at {var.split("_")[-1]} nm'
+                    units = 'km**-1 sr**-1'
                 elif var == 'dpol_1064':
                     description = 'Cloud top depolarization ratio at 1064 nm'
                     units = '#'
@@ -2778,9 +2781,10 @@ class Cpl(Lidar):
                     - lon (time): xarray.DataArray(float) - Longitude (degrees)
 
                 Variables:
+                    - pbsc_[1064, 532, 355] (gate, time) : xarray.DataArray(float) - Particulate backscatter coefficient (km**-1 sr**-1) profile for each record
                     - dpol_1064 (gate, time) : xarray.DataArray(float) - Total depolarization ratio profile at 1064 nm for each record
-                    - ext_[1064, 532, 355] (gate, time) : xarray.DataArray(float) - Extinction coefficient (km**-1) profile at [1064, 532, 355] nm for each record
-                    - cod_[1064, 532, 355] (gate, time) : xarray.DataArray(float) - Integrated cloud optical depth at [1064, 532, 355] nm
+                    - ext_[1064, 532, 355] (gate, time) : xarray.DataArray(float) - Extinction coefficient (km**-1) profile for each record
+                    - cod_[1064, 532, 355] (gate, time) : xarray.DataArray(float) - Integrated cloud optical depth
 
                 Attribute Information:
                     Experiment, Date, Aircraft, Lidar Name, Data Contact, Instrument PI, Mission PI,
@@ -2830,7 +2834,9 @@ class Cpl(Lidar):
             for var in ['atb_1064', 'atb_532', 'atb_355']:
                 self.data[var] = self.qc_profile(self.data[var], l2_qc_ref)
         elif (l2_qc_ref is not None) and (self.name == 'CPL L2 Profiles'):
-            for var in ['ext_1064', 'ext_532', 'ext_355', 'dpol_1064']:
+            for var in [
+                    'pbsc_1064', 'pbsc_532', 'pbsc_355',
+                    'ext_1064', 'ext_532', 'ext_355', 'dpol_1064']:
                 self.data[var] = self.qc_profile(self.data[var], l2_qc_ref)
         
         # mask values when aircraft is rolling
@@ -3139,6 +3145,54 @@ class Cpl(Lidar):
                 units='m'
             )
         )
+        pbsc1064 = xr.DataArray(
+            data = np.ma.masked_where(
+                hdf['profile']['Particulate_Backscatter_Coefficient_1064'][:, tind] <= 0.,
+                hdf['profile']['Particulate_Backscatter_Coefficient_1064'][:, tind]
+            ),
+            dims = ['gate', 'time'],
+            coords = dict(
+                gate = np.arange(len(hght1d)),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Particulate backscatter coefficient profile at 1064 nm for each record',
+                units='km**-1 sr**-1'
+            )
+        )
+        pbsc532 = xr.DataArray(
+            data = np.ma.masked_where(
+                hdf['profile']['Particulate_Backscatter_Coefficient_532'][:, tind] <= 0.,
+                hdf['profile']['Particulate_Backscatter_Coefficient_532'][:, tind]
+            ),
+            dims = ['gate', 'time'],
+            coords = dict(
+                gate = np.arange(len(hght1d)),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Particulate backscatter coefficient profile at 532 nm for each record',
+                units='km**-1 sr**-1'
+            )
+        )
+        pbsc355 = xr.DataArray(
+            data = np.ma.masked_where(
+                hdf['profile']['Particulate_Backscatter_Coefficient_355'][:, tind] <= 0.,
+                hdf['profile']['Particulate_Backscatter_Coefficient_355'][:, tind]
+            ),
+            dims = ['gate', 'time'],
+            coords = dict(
+                gate = np.arange(len(hght1d)),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Particulate backscatter coefficient profile at 355 nm for each record',
+                units='km**-1 sr**-1'
+            )
+        )
         ext1064 = xr.DataArray(
             data = np.ma.masked_where(
                 hdf['profile']['Extinction_Coefficient_1064'][:, tind] <= 0.,
@@ -3264,6 +3318,9 @@ class Cpl(Lidar):
         # construct the dataset
         ds = xr.Dataset(
             data_vars={
+                'pbsc_1064': pbsc1064,
+                'pbsc_532': pbsc532,
+                'pbsc_355': pbsc355,
                 'dpol_1064': dpol1064,
                 'ext_1064': ext1064,
                 'ext_532': ext532,

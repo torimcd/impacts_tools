@@ -4,6 +4,6 @@ This repository contains code for processing and exploring instrument data from 
 Contributors include:  
 Victoria McDonald [@torimcd](https://github.com/torimcd)  
 Joe Finlon [@joefinlon](https://github.com/joefinlon)  
-Nina Maherndl [@nmaherndl] (https://github.com/nmaherndl)
+Nina Maherndl [@nmaherndl](https://github.com/nmaherndl)
 
 This repository is under active development and more information will be available soon. 
