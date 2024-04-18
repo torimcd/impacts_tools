@@ -44,7 +44,8 @@ def parse_header(f, date, stream='default'):
             delim2 = ','
         hdr = {}
         hdr['NLHEAD'], hdr['FFI'] = f.readline().rstrip('\n').split(delim)
-
+        hdr['NLHEAD'] = int(hdr['NLHEAD'])
+        
         # Check that the file is indeed NASA AMES 1001
         if hdr['FFI'].replace(' ', '') != '1001':
             print("Check file type, looks like it's not FFI 1001")
@@ -70,6 +71,17 @@ def parse_header(f, date, stream='default'):
         hdr['VMISS'] = [float(x) for x in vmiss]
         hdr['VNAME'] = ['time']
         hdr['VUNIT'] = ['seconds since ' + date]
+        
+        # fix number headers and vars if needed
+        if (len(hdr['VSCAL']) == len(hdr['VMISS'])) and (len(hdr['VSCAL']) < hdr['NV']):
+            print(
+                'Invalid number of variables in header data '
+                f'(reported as {hdr["NV"]}, should be {len(hdr["VSCAL"])}). Fixing...'
+            )
+            NV_ofset = hdr['NV'] - len(hdr['VSCAL'])
+            hdr['NLHEAD'] -= NV_ofset
+            hdr['NV'] -= NV_ofset
+        
         for nvar in range(hdr['NV']):
             if stream == 'und':
                 line_buffer = f.readline().rstrip('].\n').split('[', -1)
@@ -120,7 +132,7 @@ class P3():
             - tas (time) : xarray.DataArray(float) - Aircraft true air speed (m/s)
             - ias (time) : xarray.DataArray(float) - Aircraft indicated air speed (m/s)
             - mach (time) : xarray.DataArray(float) - Aircraft mach number
-            - zvel_p3 (time) : xarray.DataArray(float) - Aircraft vertical speed (m/s)
+            - zvel_p3 (time) : xarray.-DataArray(float) - Aircraft vertical speed (m/s)
             - heading (time) : xarray.DataArray(float) - Aircraft true heading (deg clockwise from +y)
             - track (time) : xarray.DataArray(float) - Aircraft track angle (deg clockwise from +y)
             - drift (time) : xarray.DataArray(float) - Aircraft drift angle (deg clockwise from +y)
@@ -177,6 +189,7 @@ class P3():
         '''
         hdr = {}
         hdr['NLHEAD'], hdr['FFI'] = f.readline().rstrip('\n').split(',')
+        hdr['NLHEAD'] = int(hdr['NLHEAD'])
 
         # Check that the file is indeed NASA AMES 1001
         if hdr['FFI'].replace(' ', '') != '1001':
@@ -249,7 +262,7 @@ class P3():
 
             # parse the data
             data_raw = np.genfromtxt(
-                filepath, delimiter=',', skip_header=int(header['NLHEAD']),
+                filepath, delimiter=',', skip_header=header['NLHEAD'],
                 missing_values=header['VMISS'], usemask=True, filling_values=np.nan
             )
 
@@ -776,11 +789,11 @@ class Instrument(ABC):
         dummy_times = xr.Dataset(
             coords = {time_dim: dt_range}
         )
+        freqstr = pd.tseries.frequencies.to_offset(td_p3).freqstr
+        if freqstr == 'S': # bug fix
+            freqstr = '1S'
         
-        return (
-            self.data.interp_like(dummy_times),
-            pd.tseries.frequencies.to_offset(td_p3).freqstr
-        )
+        return (self.data.interp_like(dummy_times), freqstr)
     
     def trim_time_bounds(self, start_time=None, end_time=None, tres='1S'):
         """
@@ -1093,7 +1106,7 @@ class Tamms(Instrument):
 
         # parse the data
         data_raw = np.genfromtxt(
-            filepath, delimiter=',', skip_header=int(header['NLHEAD']),
+            filepath, delimiter=',', skip_header=header['NLHEAD'],
             missing_values=header['VMISS'], usemask=True, filling_values=np.nan
         )
 
@@ -1351,7 +1364,7 @@ class Cdp(Instrument):
                 header = parse_header(open(file, 'r'), date, stream='und')
                 
                 data_raw = np.genfromtxt(
-                    file, delimiter=None, skip_header=int(header['NLHEAD']),
+                    file, delimiter=None, skip_header=header['NLHEAD'],
                     missing_values=header['VMISS'], usemask=True, filling_values=np.nan
                 )
                 
@@ -1629,7 +1642,7 @@ class Und(Instrument):
 
         # parse the data
         data_raw = np.genfromtxt(
-            filepath, skip_header=int(header['NLHEAD']),
+            filepath, skip_header=header['NLHEAD'],
             missing_values=header['VMISS'], usemask=True, filling_values=np.nan
         )
 
@@ -1665,170 +1678,10 @@ class Und(Instrument):
         )
 
         # populate data arrays
-        temp = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft ambient temperature']),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Aircraft ambient temperature',
-                units = 'degrees_Celsius'
-            )
-        )
-        spress = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft static pressure']),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Aircraft static pressure',
-                units = 'hPa'
-            )
-        )
-        td = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft dew point temperature']),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Aircraft dew point temperature',
-                units = 'degrees_Celsius'
-            )
-        )
         if '2020' in date:
             vname_tas = 'True Air Speed'
         else:
             vname_tas = 'Aircraft True Air Speed'
-        tas = xr.DataArray(
-            data = np.ma.masked_invalid(readfile[vname_tas]),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Aircraft true air speed',
-                units = 'm/s'
-            )
-        )
-        palt = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Pressure Altitude']),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Pressure altitude',
-                units = 'm'
-            )
-        )
-        track = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft Track Angle']),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Aircraft track angle',
-                units = 'degrees'
-            )
-        )
-        ias = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft Indicated Air Speed']),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Aircraft indicated air speed',
-                units = 'm/s'
-            )
-        )
-        grdspd = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft Ground Speed']),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Aircraft ground speed',
-                units = 'm/s'
-            )
-        )
-        palt_ac = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft Presure Altitude']),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Aircraft pressure altitude',
-                units = 'feet'
-            )
-        )
-        alt = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft GPS Altitude MSL']),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Aircraft GPS altitude (above mean sea level)',
-                units = 'm'
-            )
-        )
-        wspd = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft wind speed']),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Aircraft wind speed',
-                units = 'm/s'
-            )
-        )
-        wdir = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft wind direction']),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Aircraft wind direction',
-                units = 'degrees'
-            )
-        )
-        roll = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft Roll Angle']),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Aircraft roll angle',
-                units = 'degrees'
-            )
-        )
-        pitch = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft Pitch Angle']),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Aircraft pitch angle',
-                units = 'degrees'
-            )
-        )
-        head = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft True Heading']),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Aircraft true heading',
-                units = 'degrees'
-            )
-        )
-        w = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft Vertical Velocity']),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Aircraft vertical velocity',
-                units = 'm/s'
-            )
-        )
-        lat = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft latitude']),
-            dims = 'time',
-            coords = dict(time = time),
-            attrs = dict(
-                description='Aircraft latitude',
-                units='degrees_north')
-        )
-        lon = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft longitude']),
-            dims = 'time',
-            coords = dict(time = time),
-            attrs = dict(
-                description='Aircraft longitude',
-                units='degrees_east')
-        )
         lwc_king = xr.DataArray(
             data = np.ma.masked_invalid(
                 readfile['Liquid Water Content based on King Probe measurement adjusted']
@@ -1890,19 +1743,187 @@ class Und(Instrument):
                 description='Frequency from the Rosemont Icing Detector',
                 units='Hz')
         )
-        data_vars = {
-            'lon': lon, 'lat': lat,
-            'alt_gps': alt, 'alt_pres': palt_ac,
-            'grnd_spd': grdspd, 'tas': tas, 'ias': ias,
-            'zvel': w,
-            'heading': head, 'track': track, 'pitch': pitch, 'roll': roll,
-            'temp': temp, 'dwpt': td,
-            'pres_static': spress,
-            'wspd': wspd, 'wdir': wdir,
-            'lwc_king': lwc_king, 'lwc_cdp': lwc_cdp,
-            'mdd_cdp': mdd_cdp, 're_cdp': re_cdp, 'n_cdp': n_cdp,
-            'freq_rice': ricefreq
-        }
+        if '2020' in date:
+            data_vars = {
+                'lwc_king': lwc_king, 'lwc_cdp': lwc_cdp,
+                'mdd_cdp': mdd_cdp, 're_cdp': re_cdp, 'n_cdp': n_cdp,
+                'freq_rice': ricefreq
+            }
+        else:
+            temp = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft ambient temperature']),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Aircraft ambient temperature',
+                    units = 'degrees_Celsius'
+                )
+            )
+            spress = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft static pressure']),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Aircraft static pressure',
+                    units = 'hPa'
+                )
+            )
+            td = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft dew point temperature']),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Aircraft dew point temperature',
+                    units = 'degrees_Celsius'
+                )
+            )
+            tas = xr.DataArray(
+                data = np.ma.masked_invalid(readfile[vname_tas]),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Aircraft true air speed',
+                    units = 'm/s'
+                )
+            )
+            palt = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Pressure Altitude']),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Pressure altitude',
+                    units = 'm'
+                )
+            )
+            track = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft Track Angle']),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Aircraft track angle',
+                    units = 'degrees'
+                )
+            )
+            ias = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft Indicated Air Speed']),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Aircraft indicated air speed',
+                    units = 'm/s'
+                )
+            )
+            grdspd = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft Ground Speed']),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Aircraft ground speed',
+                    units = 'm/s'
+                )
+            )
+            palt_ac = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft Presure Altitude']),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Aircraft pressure altitude',
+                    units = 'feet'
+                )
+            )
+            alt = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft GPS Altitude MSL']),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Aircraft GPS altitude (above mean sea level)',
+                    units = 'm'
+                )
+            )
+            wspd = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft wind speed']),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Aircraft wind speed',
+                    units = 'm/s'
+                )
+            )
+            wdir = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft wind direction']),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Aircraft wind direction',
+                    units = 'degrees'
+                )
+            )
+            roll = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft Roll Angle']),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Aircraft roll angle',
+                    units = 'degrees'
+                )
+            )
+            pitch = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft Pitch Angle']),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Aircraft pitch angle',
+                    units = 'degrees'
+                )
+            )
+            head = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft True Heading']),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Aircraft true heading',
+                    units = 'degrees'
+                )
+            )
+            w = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft Vertical Velocity']),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Aircraft vertical velocity',
+                    units = 'm/s'
+                )
+            )
+            lat = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft latitude']),
+                dims = 'time',
+                coords = dict(time = time),
+                attrs = dict(
+                    description='Aircraft latitude',
+                    units='degrees_north')
+            )
+            lon = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft longitude']),
+                dims = 'time',
+                coords = dict(time = time),
+                attrs = dict(
+                    description='Aircraft longitude',
+                    units='degrees_east')
+            )
+            
+            data_vars = {
+                'lon': lon, 'lat': lat,
+                'alt_gps': alt, 'alt_pres': palt_ac,
+                'grnd_spd': grdspd, 'tas': tas, 'ias': ias,
+                'zvel': w,
+                'heading': head, 'track': track, 'pitch': pitch, 'roll': roll,
+                'temp': temp, 'dwpt': td,
+                'pres_static': spress,
+                'wspd': wspd, 'wdir': wdir,
+                'lwc_king': lwc_king, 'lwc_cdp': lwc_cdp,
+                'mdd_cdp': mdd_cdp, 're_cdp': re_cdp, 'n_cdp': n_cdp,
+                'freq_rice': ricefreq
+            }
         if '2023' in date:
             ricefreq2 = xr.DataArray(
                 data = np.ma.masked_invalid(readfile['The current Sensor2']),
@@ -1992,6 +2013,7 @@ class Wisper(Instrument):
     """
     A class to represent the WISPER instruments summary on the P-3 during the IMPACTS field campaign.
     Inherits from Instrument()
+    Contribution from Nina Maherndl
     
     Parameters
     ----------
@@ -2062,7 +2084,7 @@ class Wisper(Instrument):
 
         # parse the data
         data_raw = np.genfromtxt(
-            filepath, delimiter=',', skip_header=int(header['NLHEAD']),
+            filepath, delimiter=',', skip_header=header['NLHEAD'],
             missing_values=header['VMISS'], usemask=True, filling_values=np.nan, encoding = 'latin1'
         )
         
@@ -2105,7 +2127,7 @@ class Wisper(Instrument):
             dims = 'time',
             coords = dict(time = time),
             attrs = dict(
-                description='CWC, g/(m^3), condensed water concentration (ice + liquid water)',
+                description='Condensed water concentration (ice + liquid water)',
                 units='g m-3'))
 
         h20_vap_wisper = xr.DataArray(
@@ -2115,7 +2137,7 @@ class Wisper(Instrument):
             dims = 'time',
             coords = dict(time = time),
             attrs = dict(
-                description='H2O_VAP, ppm, water vapor mixing ratio',
+                description='Water vapor mixing ratio',
                 units='ppm'))
 
         deltad_c_wisper = xr.DataArray(
@@ -2125,7 +2147,7 @@ class Wisper(Instrument):
             dims = 'time',
             coords = dict(time = time),
             attrs = dict(
-                description='DELTAD_C, permil, HDO/H2(16)O ratio in condensed water',
+                description='HDO/H2(16)O ratio in condensed water',
                 units='permil'))
 
         deltao18_c_wisper = xr.DataArray(
@@ -2135,7 +2157,7 @@ class Wisper(Instrument):
             dims = 'time',
             coords = dict(time = time),
             attrs = dict(
-                description='DELTAO18_C, permil, H2(18)O/H2(16)O ratio in condensed water',
+                description='H2(18)O/H2(16)O ratio in condensed water',
                 units='permil'))
 
         deltad_v_wisper = xr.DataArray(
@@ -2145,7 +2167,7 @@ class Wisper(Instrument):
             dims = 'time',
             coords = dict(time = time),
             attrs = dict(
-                description='DELTAD_V, permil, HDO/H2(16)O ratio in water vapor',
+                description='HDO/H2(16)O ratio in water vapor',
                 units='permil'))
         
         deltao18_v_wisper = xr.DataArray(
@@ -2155,16 +2177,16 @@ class Wisper(Instrument):
             dims = 'time',
             coords = dict(time = time),
             attrs = dict(
-                description='DELTAO18_V, permil, H2(18)O/H2(16)O ratio in water vapor',
+                description='H2(18)O/H2(16)O ratio in water vapor',
                 units='permil'))
 
         data_vars = {
-            'cwc_wisper': cwc_wisper,
-            'h20_vap_wisper': h20_vap_wisper,
-            'deltad_c_wisper': deltad_c_wisper,
-            'deltao18_c_wisper': deltao18_c_wisper,
-            'deltad_v_wisper': deltad_v_wisper,
-            'deltao18_v_wisper': deltao18_v_wisper
+            'cwc': cwc_wisper,
+            'h20_vap': h20_vap_wisper,
+            'deltad_c': deltad_c_wisper,
+            'deltao18_c': deltao18_c_wisper,
+            'deltad_v': deltad_v_wisper,
+            'deltao18_v': deltao18_v_wisper
 
         }
  
