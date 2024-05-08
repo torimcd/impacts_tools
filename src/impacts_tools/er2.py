@@ -349,7 +349,7 @@ class Lidar(ABC):
         # return nan for pixels not residing within layers
         return data_array.where(mask == 0)
     
-    def trim_time_bounds(self, start_time=None, end_time=None, tres='1s'):
+    def trim_time_bounds(self, start_time=None, end_time=None):
         """
         Put the dataset into the specified time bounds.
         
@@ -379,7 +379,7 @@ class Lidar(ABC):
                 end_time = self.data['time'][-1].values
 
             # generate trimmed dataset based on time bounds
-            if pd.Timedelta(tres) != pd.Timedelta(1, 's'):
+            if td_ds > pd.Timedelta(1, 's'):
                 end_time -= td_ds
             ds_sub = self.data.sel(time=slice(start_time, end_time))
             
@@ -3599,7 +3599,7 @@ class Cpl(Lidar):
         
         # extract L1B data valid at the L2 profile midpoints
         l1b_sub = l1b_data[['er2_altitude', 'er2_heading', 'er2_roll']].reindex(
-            time=l2_sub.time, method='nearest', tolerance='5S'
+            time=l2_sub.time, method='nearest', tolerance='5s'
         )
         
         return xr.merge(
