@@ -349,7 +349,7 @@ class Lidar(ABC):
         # return nan for pixels not residing within layers
         return data_array.where(mask == 0)
     
-    def trim_time_bounds(self, start_time=None, end_time=None, tres='1S'):
+    def trim_time_bounds(self, start_time=None, end_time=None, tres='1s'):
         """
         Put the dataset into the specified time bounds.
         
@@ -665,7 +665,7 @@ class Crs(Radar):
         # Time information -- this is the first dimension in nav coords and products
         time_raw = hdf['Time']['Data']['TimeUTC'][:]
         time_dt = [datetime(1970, 1, 1) + timedelta(seconds=time_raw[i]) for i in range(len(time_raw))] # Python datetime object
-        time_dt64 = np.array(time_dt, dtype='datetime64[ms]') # Numpy datetime64 object (e.g., for plotting)
+        time_dt64 = np.array(time_dt, dtype='datetime64[ns]') # Numpy datetime64 object (e.g., for plotting)
 
         if start_time is not None:
             time_inds = np.where((time_dt64>=start_time) & (time_dt64<=end_time))[0]
@@ -1351,7 +1351,7 @@ class Hiwrap(Radar):
         # Time information -- this is the first dimension in nav coords and products
         time_raw = hdf['Time']['Data']['TimeUTC'][:]
         time_dt = [datetime(1970, 1, 1) + timedelta(seconds=time_raw[i]) for i in range(len(time_raw))] # Python datetime object
-        time_dt64 = np.array(time_dt, dtype='datetime64[ms]') # Numpy datetime64 object (e.g., for plotting)
+        time_dt64 = np.array(time_dt, dtype='datetime64[ns]') # Numpy datetime64 object (e.g., for plotting)
 
         if start_time is not None:
             time_inds = np.where((time_dt64>=start_time) & (time_dt64<=end_time))[0]
@@ -1366,7 +1366,7 @@ class Hiwrap(Radar):
                 for i in range(len(time2_raw))
             ] # Python datetime object
             time2_dt64 = np.array(
-                time2_dt, dtype='datetime64[ms]'
+                time2_dt, dtype='datetime64[ns]'
             ) # Numpy datetime64 object (e.g., for plotting)
             ka_inds = np.isin(time2_dt64, time_dt64) # find HIWRAP Ka-band time indices common to Ku-band
 
@@ -2260,7 +2260,7 @@ class Exrad(Radar):
         # Time information -- this is the first dimension in nav coords and products
         time_raw = hdf['Time']['Data']['TimeUTC'][:]
         time_dt = [datetime(1970, 1, 1) + timedelta(seconds=time_raw[i]) for i in range(len(time_raw))] # Python datetime object
-        time_dt64 = np.array(time_dt, dtype='datetime64[ms]') # Numpy datetime64 object (e.g., for plotting)
+        time_dt64 = np.array(time_dt, dtype='datetime64[ns]') # Numpy datetime64 object (e.g., for plotting)
 
         if start_time is not None:
             time_inds = np.where((time_dt64>=start_time) & (time_dt64<=end_time))[0]
@@ -2876,7 +2876,7 @@ class Cpl(Lidar):
             [date + timedelta(
                 days=int(hdf['Dec_JDay'][i]) - 1, hours=int(hdf['Hour'][i]),
                 minutes=int(hdf['Minute'][i]), seconds=int(hdf['Second'][i])
-            ) for i in range(hdf['Hour'].shape[0])], dtype='datetime64[ms]'
+            ) for i in range(hdf['Hour'].shape[0])], dtype='datetime64[ns]'
         )
         
         # aircraft nav information
@@ -3076,7 +3076,7 @@ class Cpl(Lidar):
         dt = np.array(
             [date + timedelta(
                 seconds=int((86400. * (jday[i, 1] - 1)).round())
-            ) for i in range(jday.shape[0])], dtype='datetime64[ms]'
+            ) for i in range(jday.shape[0])], dtype='datetime64[ns]'
         )
         dt, tind, tinv = np.unique(
             dt, return_index=True, return_inverse=True
@@ -3090,7 +3090,7 @@ class Cpl(Lidar):
             data=np.array(
                 [date + timedelta(
                     seconds=int((86400. * (jday[i, 0] - 1)).round())
-                ) for i in tind], dtype='datetime64[ms]'
+                ) for i in tind], dtype='datetime64[ns]'
             ),
             dims = ['time'],
             attrs = dict(
@@ -3101,7 +3101,7 @@ class Cpl(Lidar):
             data=np.array(
                 [date + timedelta(
                     seconds=int((86400. * (jday[i, 2] - 1)).round())
-                ) for i in tind], dtype='datetime64[ms]'
+                ) for i in tind], dtype='datetime64[ns]'
             ),
             dims = ['time'],
             attrs = dict(
@@ -3381,7 +3381,7 @@ class Cpl(Lidar):
         dt = np.array(
             [date + timedelta(
                 seconds=int((86400. * (jday[i, 1] - 1)).round())
-            ) for i in range(jday.shape[0])], dtype='datetime64[ms]'
+            ) for i in range(jday.shape[0])], dtype='datetime64[ns]'
         )
         dt, tind, tinv = np.unique(
             dt, return_index=True, return_inverse=True
@@ -3643,7 +3643,7 @@ class VAD(object):
         time_raw = vad.time.values
 
         time_dt = [julian.from_jd(time_raw[i], fmt='jd') for i in range(len(time_raw))] # Python datetime object
-        time_dt64 = np.array(time_dt, dtype='datetime64[ms]') # Numpy datetime64 object (e.g., for plotting)
+        time_dt64 = np.array(time_dt, dtype='datetime64[ns]') # Numpy datetime64 object (e.g., for plotting)
 
         radar_range = vad['range'].values
 

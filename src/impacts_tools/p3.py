@@ -711,7 +711,7 @@ class P3():
                 end_time = str(np.datetime_as_string(ds['time'][-1]))
                 
             # remove 1 s from end_time if tres > 1 (for slice() function)
-            if pd.to_timedelta(tres) > pd.to_timedelta('1S'):
+            if pd.to_timedelta(tres) > pd.to_timedelta('1s'):
                 end_time = str(
                     np.datetime_as_string(
                         np.datetime64(end_time) - np.timedelta64(1, 's')
@@ -721,7 +721,7 @@ class P3():
                 
                 
         # resample (average) the dataset if needed
-        if pd.to_timedelta(tres) > pd.to_timedelta('1S'):
+        if pd.to_timedelta(tres) > pd.to_timedelta('1s'):
             ds = ds.resample(time=tres).mean(skipna=True, keep_attrs=True)
         elif pd.to_timedelta(tres) < pd.to_timedelta('1S'):
             print('Upsampling data is not supported at this time.')
