@@ -232,7 +232,7 @@ class P3():
 
         return hdr
     
-    def readfile(self, filepath, date, start_time=None, end_time=None, tres='1S', fmt='ames'):
+    def readfile(self, filepath, date, start_time=None, end_time=None, tres='1s', fmt='ames'):
         """
         Reads the P-3 Met-Nav data file and unpacks the fields into an xarray.Dataset
         
@@ -723,7 +723,7 @@ class P3():
         # resample (average) the dataset if needed
         if pd.to_timedelta(tres) > pd.to_timedelta('1s'):
             ds = ds.resample(time=tres).mean(skipna=True, keep_attrs=True)
-        elif pd.to_timedelta(tres) < pd.to_timedelta('1S'):
+        elif pd.to_timedelta(tres) < pd.to_timedelta('1s'):
             print('Upsampling data is not supported at this time.')
             
         return ds
@@ -1054,10 +1054,10 @@ class Tamms(Instrument):
         ds_downsampled = ds_downsampled.rename_dims(
             dims_dict={'time_raw': 'time'}
         )
-        name_dict = {'time_raw': 'time'}
+        name_dict = {}#{'time_raw': 'time'}
         for var in list(ds_downsampled.data_vars):
             name_dict[var] = var.split('_raw')[0]
-        ds_downsampled = ds_downsampled.rename(name_dict=name_dict)
+        ds_downsampled = ds_downsampled.rename_vars(name_dict=name_dict)
         
         # compute the vertical motion standard deviation for downsampled data
         wwnd_std = xr.DataArray(
