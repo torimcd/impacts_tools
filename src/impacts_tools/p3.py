@@ -1175,7 +1175,7 @@ class Tamms(Instrument):
         except KeyError:
         	palt_data = readfile['Palt_ft']
         alt_pres = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['PALT_ft']),
+            data = np.ma.masked_invalid(palt_data),
             dims = ['time_raw'],
             coords = dict(time_raw = time),
             attrs = dict(
