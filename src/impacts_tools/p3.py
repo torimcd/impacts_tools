@@ -1054,7 +1054,7 @@ class Tamms(Instrument):
         ds_downsampled = ds_downsampled.rename_dims(
             dims_dict={'time_raw': 'time'}
         )
-        name_dict = {}#{'time_raw': 'time'}
+        name_dict = {'time_raw': 'time'}
         for var in list(ds_downsampled.data_vars):
             name_dict[var] = var.split('_raw')[0]
         ds_downsampled = ds_downsampled.rename_vars(name_dict=name_dict)
@@ -1158,14 +1158,22 @@ class Tamms(Instrument):
                 description='Aircraft longitude',
                 units='degrees_east')
         )
+        try:
+        	galt_data = readfile['GPS_alt_m']
+        except KeyError:
+        	galt_data = readfile['GPSalt_m']
         alt_gps = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['GPS_alt_m']),
+            data = np.ma.masked_invalid(galt_data),
             dims = ['time_raw'],
             coords = dict(time_raw = time),
             attrs = dict(
                 description='Aircraft GPS altitude (mean sea level)',
                 units='meters')
         )
+        try:
+        	palt_data = readfile['PALT_ft']
+        except KeyError:
+        	palt_data = readfile['Palt_ft']
         alt_pres = xr.DataArray(
             data = np.ma.masked_invalid(readfile['PALT_ft']),
             dims = ['time_raw'],
