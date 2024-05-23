@@ -368,15 +368,19 @@ class Lidar(ABC):
         if (start_time is not None) or (end_time is not None):      
             # compute dataset timedelta
             td_ds = pd.to_timedelta(
-                self.data['time'][1].values - self.data['time'][0].values
-            )
+                self.data['time'][1:].values - self.data['time'][:-1].values
+            ).median() # representative td in case of outlier times during flight
             
             # format start and end times
             if start_time is None:
                 start_time = self.data['time'][0].values
+            elif isinstance(start_time, str):
+            	start_time = np.datetime64(start_time)
                 
             if end_time is None:
                 end_time = self.data['time'][-1].values
+            elif isinstance(end_time, str):
+            	end_time = np.datetime64(end_time)
 
             # generate trimmed dataset based on time bounds
             if td_ds > pd.Timedelta(1, 's'):
