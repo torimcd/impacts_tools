@@ -3249,6 +3249,62 @@ class Psd(Instrument):
                         mu_hy_temp[i] = sol.x[1]
                         lam_hy_temp[i] = sol.x[2]
                         
+            ## ===== Chase et al. (2021; doi: 10.1175/JAMC-D-20-0177.1) m-D products =====
+            mass_particle = 0.003493 * (
+                self.data['bin_center'] / 10.
+            ) ** 2.04 # particle mass (g) - from a-value in SI units = 0.042 kg m**-2.04
+            mass_ch = mass_particle * self.data['count'] # binned mass (g)
+            mass_rel_ch = mass_ch.cumsum(
+                dim='size') / mass_ch.cumsum(dim='size')[-1, :] # binned mass fraction
+            z_ch_temp = 1.e12 * (0.174 / 0.93) * (6. / np.pi / 0.934) ** 2 * (
+                mass_particle ** 2 * self.data['count'] / self.data['sv']
+            ).sum(dim='size') # simulated Z (mm^6 m^-3)
+            iwc_ch_temp = 10. ** 6 * (mass_ch / self.data['sv']).sum(dim='size') # IWC (g m-3)
+            dmm_ch_temp = xr.full_like(nt_temp, np.nan) # allocate array of nan
+            dmm_ch_temp[~np.isnan(mass_rel_ch[-1,:])] = self.data['bin_center'][
+            	(0.5 - mass_rel_ch[:, ~np.isnan(mass_rel_ch[-1,:])]).argmin(dim='size')] # med mass D (mm)
+            dm_ch_temp = 10. * (
+                (self.data['bin_center'] / 10.) * mass_ch /
+                self.data['sv']).sum(dim='size') / (
+                mass_ch / self.data['sv']
+            ).sum(dim='size') # mass-weighted mean D from Chase et al. (2020) (mm)
+            dmelt_ch_temp = ((6. * mass_particle) / (np.pi * 0.997)) ** (1. / 3.)
+            nw_ch_temp = np.log10(
+                (1e5) * (4.**4 / 6)
+                * ((dmelt_bf_temp**3 * self.data.ND * self.data.bin_width).sum(dim='size') ** 5)
+                / ((dmelt_bf_temp**4 * self.data.ND * self.data.bin_width).sum(dim='size') ** 4)
+            )
+            dml_ch_temp = 10. * (
+                (dmelt_ch_temp * mass_ch /  self.data['sv']).sum(dim='size')
+                / (mass_ch / self.data['sv']).sum(dim='size')
+            ) # liquid-equivalent Dm from Chase et al. (2022) (mm)
+            ar_ch_temp = (
+                self.data['area_ratio'] * mass_ch / self.data['sv']).sum(dim='size') / (
+                mass_ch / self.data['sv']
+            ).sum(dim='size') # mass-weighted mean area ratio
+            asr_ch_temp = (
+                self.data['aspect_ratio'] * mass_ch / self.data['sv']).sum(dim='size') / (
+                mass_ch / self.data['sv']
+            ).sum(dim='size') # mass-weighted mean aspect ratio
+            rhoe_ch_temp = (iwc_ch_temp / 10. ** 6) / vol # eff density from Chase et al. (2018) (g cm**-3)
+            
+            # optionally compute gamma fit params for each observation
+            if calc_gamma_params:
+                N0_ch_temp = -999. * np.ones(len(self.data.time))
+                mu_ch_temp = -999. * np.ones(len(self.data.time))
+                lam_ch_temp = -999. * np.ones(len(self.data.time))
+                for i in range(len(self.data.time)):
+                    if iwc_ch_temp[i] > 0: # only compute when there's a PSD
+                        sol = least_squares(
+                            self.calc_chisquare, x0, method='lm', ftol=1e-9, xtol=1e-9, max_nfev=int(1e6),
+                            args=(
+                                nt_temp[i], iwc_ch_temp[i], z_ch_temp[i], 0.003493, 2.04
+                            )
+                        ) # solve the gamma params using least squares minimziation
+                        N0_ch_temp[i] = sol.x[0]
+                        mu_ch_temp[i] = sol.x[1]
+                        lam_ch_temp[i] = sol.x[2]
+                        
             ## ===== Leinonen and Szyrmer (2015) m-D products =====
             compute_ls = False # bool for calculating optional LS products
             if (
@@ -3406,10 +3462,13 @@ class Psd(Instrument):
         if calc_gamma_params:
             N0_bf_temp = np.ma.masked_where(N0_bf_temp == -999., N0_bf_temp)
             N0_hy_temp = np.ma.masked_where(N0_hy_temp == -999., N0_hy_temp)
+            N0_ch_temp = np.ma.masked_where(N0_hy_temp == -999., N0_ch_temp)
             mu_bf_temp = np.ma.masked_where(mu_bf_temp == -999., mu_bf_temp)
             mu_hy_temp = np.ma.masked_where(mu_hy_temp == -999., mu_hy_temp)
+            mu_ch_temp = np.ma.masked_where(mu_hy_temp == -999., mu_ch_temp)
             lam_bf_temp = np.ma.masked_where(lam_bf_temp == -999., lam_bf_temp)
             lam_hy_temp = np.ma.masked_where(lam_hy_temp == -999., lam_hy_temp)
+            lam_ch_temp = np.ma.masked_where(lam_hy_temp == -999., lam_ch_temp)
             if compute_ls:
                 N0_ls_temp = np.ma.masked_where(N0_ls_temp == -999., N0_ls_temp)
                 mu_ls_temp = np.ma.masked_where(mu_hy_temp == -999., mu_ls_temp)
@@ -3417,12 +3476,15 @@ class Psd(Instrument):
         else:
             N0_bf_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
             N0_hy_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
+            N0_ch_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
             N0_ls_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
             mu_bf_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
             mu_hy_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
+            mu_ch_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
             mu_ls_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
             lam_bf_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
             lam_hy_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
+            lam_ch_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
             lam_ls_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
             
         # add bulk properties to PSD object
@@ -3513,15 +3575,15 @@ class Psd(Instrument):
                 relationship='m = 0.00196 * D ** 1.9',
                 units = 'mm')
         )
-        dmm_bf = xr.DataArray(
-            data = dmm_bf_temp,
-            dims = 'time',
-            coords = dict(time=self.data.time),
-            attrs = dict(
-                description='Median mass diameter [Brown and Francis (1995) m-D relationship]',
-                relationship='m = 0.00196 * D ** 1.9',
-                units = 'mm')
-        )
+        # dmm_bf = xr.DataArray(
+        #     data = dmm_bf_temp,
+        #     dims = 'time',
+        #     coords = dict(time=self.data.time),
+        #     attrs = dict(
+        #         description='Median mass diameter [Brown and Francis (1995) m-D relationship]',
+        #         relationship='m = 0.00196 * D ** 1.9',
+        #         units = 'mm')
+        # )
         ar_bf = xr.DataArray(
             data = ar_bf_temp,
             dims = 'time',
@@ -3612,15 +3674,15 @@ class Psd(Instrument):
                 relationship='m = 0.00528 * D ** 2.1',
                 units = 'mm')
         )
-        dmm_hy = xr.DataArray(
-            data = dmm_hy_temp,
-            dims = 'time',
-            coords = dict(time=self.data.time),
-            attrs = dict(
-                description='Median mass diameter [Heymsfield et al. (2010) m-D relationship]',
-                relationship='m = 0.00528 * D ** 2.1',
-                units = 'mm')
-        )
+        # dmm_hy = xr.DataArray(
+        #     data = dmm_hy_temp,
+        #     dims = 'time',
+        #     coords = dict(time=self.data.time),
+        #     attrs = dict(
+        #         description='Median mass diameter [Heymsfield et al. (2010) m-D relationship]',
+        #         relationship='m = 0.00528 * D ** 2.1',
+        #         units = 'mm')
+        # )
         ar_hy = xr.DataArray(
             data = ar_hy_temp,
             dims = 'time',
@@ -3646,6 +3708,96 @@ class Psd(Instrument):
             attrs = dict(
                 description='Effective density [Heymsfield et al. (2010) m-D relationship]',
                 relationship='m = 0.00528 * D ** 2.1',
+                units = 'g cm-3')
+        )
+        nw_ch = xr.DataArray(
+            data = nw_ch_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Normalized PSD intercept parameter [Chase et al. (2021) m-D relationship]',
+                relationship='m = 0.003493 * D ** 2.04',
+                units = 'log10(m**-3 mm**-1)')
+        )
+        N0_ch = xr.DataArray(
+            data = N0_ch_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='PSD intercept parameter [Chase et al. (2021) m-D relationship]',
+                relationship='m = 0.003493 * D ** 2.04',
+                units = 'cm-4')
+        )
+        mu_ch = xr.DataArray(
+            data = mu_ch_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='PSD shape parameter [Chase et al. (2021) m-D relationship]',
+                relationship='m = 0.003493 * D ** 2.04',
+                units = '#')
+        )
+        lam_ch = xr.DataArray(
+            data = lam_ch_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='PSD slope parameter [Chase et al. (2021) m-D relationship]',
+                relationship='m = 0.003493 * D ** 2.04',
+                units = 'cm-1')
+        )
+        iwc_ch = xr.DataArray(
+            data = iwc_ch_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Ice water content [Chase et al. (2021) m-D relationship]',
+                relationship='m = 0.003493 * D ** 2.04',
+                units = 'g m-3')
+        )
+        dm_ch = xr.DataArray(
+            data = dm_ch_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Mass-weighted mean diameter [Chase et al. (2021) m-D relationship]',
+                relationship='m = 0.003493 * D ** 2.04',
+                units = 'mm')
+        )
+        dml_ch = xr.DataArray(
+            data = dml_ch_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Liquid-equivalent mass-weighted mean diameter [Chase et al. (2021) m-D relationship]',
+                relationship='m = 0.003493 * D ** 2.04',
+                units = 'mm')
+        )
+        ar_ch = xr.DataArray(
+            data = ar_ch_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Mass-weighted mean area ratio [Chase et al. (2021) m-D relationship]',
+                relationship='m = 0.003493 * D ** 2.04',
+                units = '#')
+        )
+        asr_ch = xr.DataArray(
+            data = asr_ch_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Mass-weighted mean aspect ratio [Chase et al. (2021) m-D relationship]',
+                relationship='m = 0.003493 * D ** 2.04',
+                units = '#')
+        )
+        rhoe_ch = xr.DataArray(
+            data = rhoe_ch_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Effective density [Chase et al. (2021) m-D relationship]',
+                relationship='m = 0.003493 * D ** 2.04',
                 units = 'g cm-3')
         )
         if compute_ls: # additional LS15 products
@@ -3734,34 +3886,36 @@ class Psd(Instrument):
                 'n': n,
                 'am': am.where(np.sum(dbz_error, axis=0) > 0.),
                 'bm': bm.where(np.sum(dbz_error, axis=0) > 0.),
-                'nw_bf': nw_bf, 'nw_hy': nw_hy, 'nw_ls': nw_ls,
-                'N0_bf': N0_bf, 'N0_hy': N0_hy, 'N0_ls': N0_ls,
-                'mu_bf': mu_bf, 'mu_hy': mu_hy, 'mu_ls': mu_ls,
-                'lambda_bf': lam_bf, 'lambda_hy': lam_hy, 'lambda_ls': lam_ls,
-                'iwc_bf': iwc_bf, 'iwc_hy': iwc_hy, 'iwc_ls': iwc_ls,
-                'dm_bf': dm_bf, 'dm_hy': dm_hy, 'dm_ls': dm_ls,
-                'dm_liq_bf': dml_bf, 'dm_liq_hy': dml_hy,
-                'dmm_bf': dmm_bf, 'dmm_hy': dmm_hy, 'dmm_ls': dmm_ls,
-                'rhoe_bf': rhoe_bf, 'rhoe_hy': rhoe_hy, 'rhoe_ls': rhoe_ls,
-                'area_ratio_mean_n': ar_nw, 'area_ratio_mean_bf': ar_bf,
-                'area_ratio_mean_hy': ar_hy, 'area_ratio_mean_ls': ar_ls,
-                'aspect_ratio_mean_n': asr_nw, 'aspect_ratio_mean_bf': asr_bf,
-                'aspect_ratio_mean_hy': asr_hy, 'aspect_ratio_mean_ls': asr_ls
+                'nw_bf': nw_bf, 'nw_hy': nw_hy, 'nw_ch': nw_ch, 'nw_ls': nw_ls,
+                'N0_bf': N0_bf, 'N0_hy': N0_hy, 'N0_ch': N0_ch, 'N0_ls': N0_ls,
+                'mu_bf': mu_bf, 'mu_hy': mu_hy, 'mu_ch': mu_ch, 'mu_ls': mu_ls,
+                'lambda_bf': lam_bf, 'lambda_hy': lam_hy, 'lambda_ch': lam_ch, 'lambda_ls': lam_ls,
+                'iwc_bf': iwc_bf, 'iwc_hy': iwc_hy, 'iwc_ch': iwc_ch, 'iwc_ls': iwc_ls,
+                'dm_bf': dm_bf, 'dm_hy': dm_hy, 'dm_ch': dm_ch, 'dm_ls': dm_ls,
+                'dm_liq_bf': dml_bf, 'dm_liq_hy': dml_hy, 'dm_liq_ch': dml_ch,
+                #'dmm_bf': dmm_bf, 'dmm_hy': dmm_hy, 'dmm_ls': dmm_ls,
+                'rhoe_bf': rhoe_bf, 'rhoe_hy': rhoe_hy, 'rhoe_ch': rhoe_ch, 'rhoe_ls': rhoe_ls,
+                'area_ratio_mean_n': ar_nw, 'area_ratio_mean_bf': ar_bf, 'area_ratio_mean_hy': ar_hy,
+                'area_ratio_mean_ch': ar_ch, 'area_ratio_mean_ls': ar_ls,
+                'aspect_ratio_mean_n': asr_nw, 'aspect_ratio_mean_bf': asr_bf, 'aspect_ratio_mean_hy': asr_hy,
+                'aspect_ratio_mean_ch': asr_ch, 'aspect_ratio_mean_ls': asr_ls
             }
         else:
             data_vars = {
                 'n': n,
-                'N0_bf': N0_bf, 'N0_hy': N0_hy,
-                'mu_bf': mu_bf, 'mu_hy': mu_hy,
-                'lambda_bf': lam_bf, 'lambda_hy': lam_hy,
-                'nw_bf': nw_bf, 'nw_hy': nw_hy,
-                'iwc_bf': iwc_bf, 'iwc_hy': iwc_hy,
-                'dm_bf': dm_bf, 'dm_hy': dm_hy,
-                'dm_liq_bf': dml_bf, 'dm_liq_hy': dml_hy,
-                'dmm_bf': dmm_bf, 'dmm_hy': dmm_hy,
-                'rhoe_bf': rhoe_bf, 'rhoe_hy': rhoe_hy,
-                'area_ratio_mean_n': ar_nw, 'area_ratio_mean_bf': ar_bf, 'area_ratio_mean_hy': ar_hy,
-                'aspect_ratio_mean_n': asr_nw, 'aspect_ratio_mean_bf': asr_bf, 'aspect_ratio_mean_hy': asr_hy
+                'nw_bf': nw_bf, 'nw_hy': nw_hy, 'nw_ch': nw_ch,
+                'N0_bf': N0_bf, 'N0_hy': N0_hy, 'N0_ch': N0_ch,
+                'mu_bf': mu_bf, 'mu_hy': mu_hy, 'mu_ch': mu_ch,
+                'lambda_bf': lam_bf, 'lambda_hy': lam_hy, 'lambda_ch': lam_ch,
+                'iwc_bf': iwc_bf, 'iwc_hy': iwc_hy, 'iwc_ch': iwc_ch,
+                'dm_bf': dm_bf, 'dm_hy': dm_hy, 'dm_ch': dm_ch,
+                'dm_liq_bf': dml_bf, 'dm_liq_hy': dml_hy, 'dm_liq_ch': dml_ch,
+                #'dmm_bf': dmm_bf, 'dmm_hy': dmm_hy,
+                'rhoe_bf': rhoe_bf, 'rhoe_hy': rhoe_hy, 'rhoe_ch': rhoe_ch,
+                'area_ratio_mean_n': ar_nw, 'area_ratio_mean_bf': ar_bf,
+                'area_ratio_mean_hy': ar_hy, 'area_ratio_mean_ch': ar_ch,
+                'aspect_ratio_mean_n': asr_nw, 'aspect_ratio_mean_bf': asr_bf,
+                'aspect_ratio_mean_hy': asr_hy, 'aspect_ratio_mean_ch': asr_ch
             }
         
         # put bulk properties together into an XArray DataSet
@@ -3776,12 +3930,15 @@ class Psd(Instrument):
                 ds = ds.drop_vars(
                     [
                         'N0_bf', 'mu_bf', 'lambda_bf', 'N0_hy', 'mu_hy', 'lambda_hy',
-                        'N0_ls', 'mu_ls', 'lambda_ls'
+                        'N0_ch', 'mu_ch', 'lambda_ch', 'N0_ls', 'mu_ls', 'lambda_ls'
                     ]
                 )
             else:
                 ds = ds.drop_vars(
-                    ['N0_bf', 'mu_bf', 'lambda_bf', 'N0_hy', 'mu_hy', 'lambda_hy']
+                    [
+                        'N0_bf', 'mu_bf', 'lambda_bf', 'N0_hy', 'mu_hy', 'lambda_hy',
+                        'N0_ch', 'mu_ch', 'lambda_ch'
+                    ]
                 )
         if 'habit' in list(self.data.dims):
             ds_merged = xr.merge(
