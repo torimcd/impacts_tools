@@ -3147,14 +3147,19 @@ class Psd(Instrument):
                 mass_particle ** 2 * self.data['count'] / self.data['sv']
             ).sum(dim='size') # simulated Z (mm^6 m^-3)
             iwc_bf_temp = 10. ** 6 * (mass_bf / self.data['sv']).sum(dim='size') # IWC (g m-3)
-            dmm_bf_temp = xr.full_like(nt_temp, np.nan) # allocate array of nan
-            dmm_bf_temp[~np.isnan(mass_rel_bf[-1,:])] = self.data['bin_center'][
-            	(0.5 - mass_rel_bf[:, ~np.isnan(mass_rel_bf[-1,:])]).argmin(dim='size')] # med mass D (mm)
+            # dmm_bf_temp = xr.full_like(nt_temp, np.nan) # allocate array of nan
+            # dmm_bf_temp[~np.isnan(mass_rel_bf[-1,:])] = self.data['bin_center'][
+            # 	(0.5 - mass_rel_bf[:, ~np.isnan(mass_rel_bf[-1,:])]).argmin(dim='size')] # med mass D (mm)
             dm_bf_temp = 10. * (
                 (self.data['bin_center'] / 10.) * mass_bf /
                 self.data['sv']).sum(dim='size') / (
                 mass_bf / self.data['sv']
             ).sum(dim='size') # mass-weighted mean D from Chase et al. (2020) (mm)
+            msstd_bf_temp = np.sqrt(
+                (10.**6) * (
+                    mass_bf / self.data['sv'] * (self.data['bin_center'] - dm_bf_temp)**2
+                ).sum(dim='size') / iwc_bf_temp
+            ) # width of the PSD mass spectrum (Borque et al. 2019 Eqn 6)
             dmelt_bf_temp = ((6. * mass_particle) / (np.pi * 0.997)) ** (1. / 3.) # (cm)
             nw_bf_temp = np.log10(
                 (1e5) * (4.**4 / 6)
@@ -3204,19 +3209,24 @@ class Psd(Instrument):
                 mass_particle ** 2 * self.data['count'] / self.data['sv']
             ).sum(dim='size') # simulated Z (mm^6 m^-3)
             iwc_hy_temp = 10. ** 6 * (mass_hy / self.data['sv']).sum(dim='size') # IWC (g m-3)
-            dmm_hy_temp = xr.full_like(nt_temp, np.nan) # allocate array of nan
-            dmm_hy_temp[~np.isnan(mass_rel_hy[-1,:])] = self.data['bin_center'][
-            	(0.5 - mass_rel_hy[:, ~np.isnan(mass_rel_hy[-1,:])]).argmin(dim='size')] # med mass D (mm)
+            # dmm_hy_temp = xr.full_like(nt_temp, np.nan) # allocate array of nan
+            # dmm_hy_temp[~np.isnan(mass_rel_hy[-1,:])] = self.data['bin_center'][
+            # 	(0.5 - mass_rel_hy[:, ~np.isnan(mass_rel_hy[-1,:])]).argmin(dim='size')] # med mass D (mm)
             dm_hy_temp = 10. * (
                 (self.data['bin_center'] / 10.) * mass_hy /
                 self.data['sv']).sum(dim='size') / (
                 mass_hy / self.data['sv']
             ).sum(dim='size') # mass-weighted mean D from Chase et al. (2020) (mm)
+            msstd_hy_temp = np.sqrt(
+                (10.**6) * (
+                    mass_hy / self.data['sv'] * (self.data['bin_center'] - dm_hy_temp)**2
+                ).sum(dim='size') / iwc_hy_temp
+            ) # width of the PSD mass spectrum (Borque et al. 2019 Eqn 6)
             dmelt_hy_temp = ((6. * mass_particle) / (np.pi * 0.997)) ** (1. / 3.)
             nw_hy_temp = np.log10(
                 (1e5) * (4.**4 / 6)
-                * ((dmelt_bf_temp**3 * self.data.ND * self.data.bin_width).sum(dim='size') ** 5)
-                / ((dmelt_bf_temp**4 * self.data.ND * self.data.bin_width).sum(dim='size') ** 4)
+                * ((dmelt_hy_temp**3 * self.data.ND * self.data.bin_width).sum(dim='size') ** 5)
+                / ((dmelt_hy_temp**4 * self.data.ND * self.data.bin_width).sum(dim='size') ** 4)
             )
             dml_hy_temp = 10. * (
                 (dmelt_hy_temp * mass_hy /  self.data['sv']).sum(dim='size')
@@ -3260,19 +3270,24 @@ class Psd(Instrument):
                 mass_particle ** 2 * self.data['count'] / self.data['sv']
             ).sum(dim='size') # simulated Z (mm^6 m^-3)
             iwc_ch_temp = 10. ** 6 * (mass_ch / self.data['sv']).sum(dim='size') # IWC (g m-3)
-            dmm_ch_temp = xr.full_like(nt_temp, np.nan) # allocate array of nan
-            dmm_ch_temp[~np.isnan(mass_rel_ch[-1,:])] = self.data['bin_center'][
-            	(0.5 - mass_rel_ch[:, ~np.isnan(mass_rel_ch[-1,:])]).argmin(dim='size')] # med mass D (mm)
+            # dmm_ch_temp = xr.full_like(nt_temp, np.nan) # allocate array of nan
+            # dmm_ch_temp[~np.isnan(mass_rel_ch[-1,:])] = self.data['bin_center'][
+            # 	(0.5 - mass_rel_ch[:, ~np.isnan(mass_rel_ch[-1,:])]).argmin(dim='size')] # med mass D (mm)
             dm_ch_temp = 10. * (
                 (self.data['bin_center'] / 10.) * mass_ch /
                 self.data['sv']).sum(dim='size') / (
                 mass_ch / self.data['sv']
             ).sum(dim='size') # mass-weighted mean D from Chase et al. (2020) (mm)
+            msstd_ch_temp = np.sqrt(
+                (10.**6) * (
+                    mass_ch / self.data['sv'] * (self.data['bin_center'] - dm_ch_temp)**2
+                ).sum(dim='size') / iwc_ch_temp
+            ) # width of the PSD mass spectrum (Borque et al. 2019 Eqn 6)
             dmelt_ch_temp = ((6. * mass_particle) / (np.pi * 0.997)) ** (1. / 3.)
             nw_ch_temp = np.log10(
                 (1e5) * (4.**4 / 6)
-                * ((dmelt_bf_temp**3 * self.data.ND * self.data.bin_width).sum(dim='size') ** 5)
-                / ((dmelt_bf_temp**4 * self.data.ND * self.data.bin_width).sum(dim='size') ** 4)
+                * ((dmelt_ch_temp**3 * self.data.ND * self.data.bin_width).sum(dim='size') ** 5)
+                / ((dmelt_ch_temp**4 * self.data.ND * self.data.bin_width).sum(dim='size') ** 4)
             )
             dml_ch_temp = 10. * (
                 (dmelt_ch_temp * mass_ch /  self.data['sv']).sum(dim='size')
@@ -3419,14 +3434,19 @@ class Psd(Instrument):
                     mass_particle ** 2 * self.data['count'] / self.data['sv']
                 ).sum(dim='size') # simulated Z (mm^6 m^-3)
                 iwc_ls_temp = 10. ** 6 * (mass_ls / self.data['sv']).sum(dim='size') # IWC (g m-3)
-                dmm_ls_temp = xr.full_like(nt_temp, np.nan) # allocate array of nan
-                dmm_ls_temp[~np.isnan(mass_rel_ls[-1,:])] = self.data['bin_center'][
-                    (0.5 - mass_rel_ls[:, ~np.isnan(mass_rel_ls[-1,:])]).argmin(dim='size')] # med mass D (mm)
+                # dmm_ls_temp = xr.full_like(nt_temp, np.nan) # allocate array of nan
+                # dmm_ls_temp[~np.isnan(mass_rel_ls[-1,:])] = self.data['bin_center'][
+                #     (0.5 - mass_rel_ls[:, ~np.isnan(mass_rel_ls[-1,:])]).argmin(dim='size')] # med mass D (mm)
                 dm_ls_temp = 10. * (
                     (self.data['bin_center'] / 10.) * mass_ls /
                     self.data['sv']).sum(dim='size') / (
                     mass_ls / self.data['sv']
                 ).sum(dim='size') # mass-weighted mean D from Chase et al. (2020) (mm)
+                msstd_ls_temp = np.sqrt(
+                    (10.**6) * (
+                        mass_ls / self.data['sv'] * (self.data['bin_center'] - dm_ls_temp)**2
+                    ).sum(dim='size') / iwc_ls_temp
+                ) # width of the PSD mass spectrum (Borque et al. 2019 Eqn 6)
                 dmelt_ls_temp = ((6. * mass_particle) / (np.pi * 0.997)) ** (1. / 3.)
                 nw_ls_temp = np.log10((1e5) * (4.**4 / 6) * (
                         dmelt_ls_temp**3 * self.data.ND * self.data.bin_width).sum(dim='size') ** 5 / (
@@ -3575,6 +3595,15 @@ class Psd(Instrument):
                 relationship='m = 0.00196 * D ** 1.9',
                 units = 'mm')
         )
+        msstd_bf = xr.DataArray(
+            data = msstd_bf_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Mass spectrum standard deviation [Brown and Francis (1995) m-D relationship]',
+                relationship='m = 0.00196 * D ** 1.9',
+                units = 'mm')
+        )
         # dmm_bf = xr.DataArray(
         #     data = dmm_bf_temp,
         #     dims = 'time',
@@ -3671,6 +3700,15 @@ class Psd(Instrument):
             coords = dict(time=self.data.time),
             attrs = dict(
                 description='Liquid-equivalent mass-weighted mean diameter [Heymsfield et al. (2010) m-D relationship]',
+                relationship='m = 0.00528 * D ** 2.1',
+                units = 'mm')
+        )
+        msstd_hy = xr.DataArray(
+            data = msstd_hy_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Mass spectrum standard deviation [Heymsfield et al. (2010) m-D relationship]',
                 relationship='m = 0.00528 * D ** 2.1',
                 units = 'mm')
         )
@@ -3773,6 +3811,15 @@ class Psd(Instrument):
                 relationship='m = 0.003493 * D ** 2.04',
                 units = 'mm')
         )
+        msstd_ch = xr.DataArray(
+            data = msstd_ch_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Mass spectrum standard deviation [Chase et al. (2021) m-D relationship]',
+                relationship='m = 0.003493 * D ** 2.04',
+                units = 'mm')
+        )
         ar_ch = xr.DataArray(
             data = ar_ch_temp,
             dims = 'time',
@@ -3849,14 +3896,22 @@ class Psd(Instrument):
                     description='Mass-weighted mean diameter [Leinonen and Szyrmer (2015) m-D relationships]',
                     units = 'mm')
             ).where(np.sum(dbz_error, axis=0) > 0.)
-            dmm_ls = xr.DataArray(
-                data = dmm_ls_temp,
+            msstd_ls = xr.DataArray(
+                data = msstd_ls_temp,
                 dims = 'time',
                 coords = dict(time=self.data.time),
                 attrs = dict(
-                    description='Median mass diameter [Leinonen and Szyrmer (2015) m-D relationships]',
+                    description='Mass spectrum standard deviation [Leinonen and Szyrmer (2015) m-D relationships]',
                     units = 'mm')
             ).where(np.sum(dbz_error, axis=0) > 0.)
+            # dmm_ls = xr.DataArray(
+            #     data = dmm_ls_temp,
+            #     dims = 'time',
+            #     coords = dict(time=self.data.time),
+            #     attrs = dict(
+            #         description='Median mass diameter [Leinonen and Szyrmer (2015) m-D relationships]',
+            #         units = 'mm')
+            # ).where(np.sum(dbz_error, axis=0) > 0.)
             ar_ls = xr.DataArray(
                 data = ar_ls_temp,
                 dims = 'time',
@@ -3893,6 +3948,7 @@ class Psd(Instrument):
                 'iwc_bf': iwc_bf, 'iwc_hy': iwc_hy, 'iwc_ch': iwc_ch, 'iwc_ls': iwc_ls,
                 'dm_bf': dm_bf, 'dm_hy': dm_hy, 'dm_ch': dm_ch, 'dm_ls': dm_ls,
                 'dm_liq_bf': dml_bf, 'dm_liq_hy': dml_hy, 'dm_liq_ch': dml_ch,
+                'mD_std_bf': msstd_bf, 'mD_std_hy': msstd_hy, 'mD_std_ch': msstd_ch, 'mD_std_ls': msstd_ls,
                 #'dmm_bf': dmm_bf, 'dmm_hy': dmm_hy, 'dmm_ls': dmm_ls,
                 'rhoe_bf': rhoe_bf, 'rhoe_hy': rhoe_hy, 'rhoe_ch': rhoe_ch, 'rhoe_ls': rhoe_ls,
                 'area_ratio_mean_n': ar_nw, 'area_ratio_mean_bf': ar_bf, 'area_ratio_mean_hy': ar_hy,
@@ -3910,6 +3966,7 @@ class Psd(Instrument):
                 'iwc_bf': iwc_bf, 'iwc_hy': iwc_hy, 'iwc_ch': iwc_ch,
                 'dm_bf': dm_bf, 'dm_hy': dm_hy, 'dm_ch': dm_ch,
                 'dm_liq_bf': dml_bf, 'dm_liq_hy': dml_hy, 'dm_liq_ch': dml_ch,
+                'mD_std_bf': msstd_bf, 'mD_std_hy': msstd_hy, 'mD_std_ch': msstd_ch,
                 #'dmm_bf': dmm_bf, 'dmm_hy': dmm_hy,
                 'rhoe_bf': rhoe_bf, 'rhoe_hy': rhoe_hy, 'rhoe_ch': rhoe_ch,
                 'area_ratio_mean_n': ar_nw, 'area_ratio_mean_bf': ar_bf,
