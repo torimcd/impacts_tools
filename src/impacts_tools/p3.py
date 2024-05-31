@@ -322,7 +322,7 @@ class P3():
                 'Aircraft_Sun_Elevation', 'Sun_Azimuth', 'Aircraft_Sun_Azimuth'
             ]
             dtypes = [
-                str, 'datetime64[s]', float, float, float, float, float, float, float, float,
+                str, 'datetime64[ns]', float, float, float, float, float, float, float, float,
                 float, float, float, float, float, float, float, float, float, float, float,
                 float, float, float, float, float, float, float, float, float, float, float,
                 float,
@@ -2614,7 +2614,7 @@ class Psd(Instrument):
                     ) + np.timedelta64(
                         int(data['time'].values[i]), 's')
                     for i in range(len(data['time']))
-                ], dtype='datetime64[s]')
+                ], dtype='datetime64[ns]')
                 bin_min = data['CONCENTRATION'].attrs['bin_endpoints'][:-1] / 1000.
                 bin_max = data['CONCENTRATION'].attrs['bin_endpoints'][1:] / 1000.
                 bin_width = (bin_max - bin_min) / 10. # (cm)
@@ -4072,7 +4072,7 @@ class Psd(Instrument):
 
         Returns
         -------
-        dt          : np.array(dtype='datetime64[s]')
+        dt          : np.array(dtype='datetime64[ns]')
           A datetime object which corresponds to the given value `time_hhmmss`.
         """
         year = np.tile(int(date[:4]), (len(time_hhmmss)))
@@ -4095,6 +4095,6 @@ class Psd(Instrument):
                 'second': second
             }
         )
-        dt = pd.to_datetime(df).to_numpy().astype('datetime64[s]')
+        dt = pd.to_datetime(df).to_numpy().astype('datetime64[ns]')
 
         return dt
