@@ -3451,7 +3451,11 @@ class Psd(Instrument):
                 nw_ls_temp = np.log10((1e5) * (4.**4 / 6) * (
                         dmelt_ls_temp**3 * self.data.ND * self.data.bin_width).sum(dim='size') ** 5 / (
                         dmelt_ls_temp**4 * self.data.ND * self.data.bin_width).sum(dim='size') ** 4)
-                ar_ls_temp = (
+                dml_ls_temp = 10. * (
+                	(dmelt_ls_temp * mass_ls /  self.data['sv']).sum(dim='size')
+                	/ (mass_ls / self.data['sv']).sum(dim='size')
+            	) # liquid-equivalent Dm from Chase et al. (2022) (mm)
+            ar_ls_temp = (
                     self.data['area_ratio'] * mass_ls / self.data['sv']).sum(dim='size') / (
                     mass_ls / self.data['sv']
                 ).sum(dim='size') # mass-weighted mean area ratio
@@ -3896,6 +3900,14 @@ class Psd(Instrument):
                     description='Mass-weighted mean diameter [Leinonen and Szyrmer (2015) m-D relationships]',
                     units = 'mm')
             ).where(np.sum(dbz_error, axis=0) > 0.)
+            dml_ls = xr.DataArray(
+            	data = dml_ls_temp,
+            	dims = 'time',
+            	coords = dict(time=self.data.time),
+            	attrs = dict(
+                	description='Liquid-equivalent mass-weighted mean diameter [Leinonen and Szyrmer (2015) m-D relationships]',
+                	units = 'mm')
+        	).where(np.sum(dbz_error, axis=0) > 0.)
             msstd_ls = xr.DataArray(
                 data = msstd_ls_temp,
                 dims = 'time',
@@ -3947,7 +3959,7 @@ class Psd(Instrument):
                 'lambda_bf': lam_bf, 'lambda_hy': lam_hy, 'lambda_ch': lam_ch, 'lambda_ls': lam_ls,
                 'iwc_bf': iwc_bf, 'iwc_hy': iwc_hy, 'iwc_ch': iwc_ch, 'iwc_ls': iwc_ls,
                 'dm_bf': dm_bf, 'dm_hy': dm_hy, 'dm_ch': dm_ch, 'dm_ls': dm_ls,
-                'dm_liq_bf': dml_bf, 'dm_liq_hy': dml_hy, 'dm_liq_ch': dml_ch,
+                'dm_liq_bf': dml_bf, 'dm_liq_hy': dml_hy, 'dm_liq_ch': dml_ch, 'dm_liq_ls': dml_ls,
                 'mD_std_bf': msstd_bf, 'mD_std_hy': msstd_hy, 'mD_std_ch': msstd_ch, 'mD_std_ls': msstd_ls,
                 #'dmm_bf': dmm_bf, 'dmm_hy': dmm_hy, 'dmm_ls': dmm_ls,
                 'rhoe_bf': rhoe_bf, 'rhoe_hy': rhoe_hy, 'rhoe_ch': rhoe_ch, 'rhoe_ls': rhoe_ls,
