@@ -3452,10 +3452,10 @@ class Psd(Instrument):
                         dmelt_ls_temp**3 * self.data.ND * self.data.bin_width).sum(dim='size') ** 5 / (
                         dmelt_ls_temp**4 * self.data.ND * self.data.bin_width).sum(dim='size') ** 4)
                 dml_ls_temp = 10. * (
-                	(dmelt_ls_temp * mass_ls /  self.data['sv']).sum(dim='size')
-                	/ (mass_ls / self.data['sv']).sum(dim='size')
+                    (dmelt_ls_temp * mass_ls /  self.data['sv']).sum(dim='size')
+                    / (mass_ls / self.data['sv']).sum(dim='size')
             	) # liquid-equivalent Dm from Chase et al. (2022) (mm)
-            ar_ls_temp = (
+                ar_ls_temp = (
                     self.data['area_ratio'] * mass_ls / self.data['sv']).sum(dim='size') / (
                     mass_ls / self.data['sv']
                 ).sum(dim='size') # mass-weighted mean area ratio

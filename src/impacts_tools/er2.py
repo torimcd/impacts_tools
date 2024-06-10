@@ -1721,7 +1721,13 @@ class Hiwrap(Radar):
             # for NUBF correction
             if dataset=='2020': # for files with combined Ku- and Ka-band data
                 data_var = hdf['Products']['Ka']['Combined']['Data']['Velocity_corrected'][:].T
-                description_var = hdf['Products']['Ka']['Combined']['Information']['Velocity_corrected_description'][0].decode('UTF-8')
+                try:
+                    description_var = hdf['Products']['Ka']['Combined']['Information']['Velocity_corrected_description'][0].decode('UTF-8')
+                except KeyError: # found missing var in 7 Feb 2020 file
+                    description_var = (
+                        'Doppler velocity corrected to account for intrusion of '
+                        'horizontal reanalysis winds and angle offset between Ku and Ka antennas'
+                    )
                 units_var = hdf['Products']['Ka']['Combined']['Information']['Velocity_corrected_units'][0].decode('UTF-8')
             else:
                 data_var = hdf2['Products']['Combined']['Data']['Velocity_corrected'][ka_inds, :].T
@@ -1771,7 +1777,13 @@ class Hiwrap(Radar):
             # for NUBF correction
             if dataset=='2020': # for files with combined Ku- and Ka-band data
                 data_var = hdf['Products']['Ku']['Combined']['Data']['Velocity_corrected'][:].T
-                description_var = hdf['Products']['Ku']['Combined']['Information']['Velocity_corrected_description'][0].decode('UTF-8')
+                try:
+                    description_var = hdf['Products']['Ku']['Combined']['Information']['Velocity_corrected_description'][0].decode('UTF-8')
+                except KeyError: # found missing var in 7 Feb 2020 file
+                    description_var = (
+                        'Doppler velocity corrected to account for intrusion of '
+                        'horizontal reanalysis winds and angle offset between Ku and Ka antennas'
+                    )
                 units_var = hdf['Products']['Ku']['Combined']['Information']['Velocity_corrected_units'][0].decode('UTF-8')
             else:
                 data_var = hdf['Products']['Combined']['Data']['Velocity_corrected'][:].T
@@ -1917,7 +1929,13 @@ class Hiwrap(Radar):
         
         if dataset=='2020': # for files with combined Ku- and Ka-band data
             data_var = hdf['Products']['Ka']['Combined']['Information']['Velocity_horizwind_offset'][:].T
-            description_var = hdf['Products']['Ka']['Combined']['Information']['Velocity_horizwind_offset_description'][0].decode('UTF-8')
+            try:
+                description_var = hdf['Products']['Ka']['Combined']['Information']['Velocity_horizwind_offset_description'][0].decode('UTF-8')
+            except KeyError: # found missing var in 7 Feb 2020 file
+                description_var = (
+                    'The horizontal wind offset used to correct Doppler velocity '
+                    '[Vel_corr = Vel_uncorr - horizwind_offset + angle_offset. This is applied to all channels.'
+                )
             units_var = hdf['Products']['Ka']['Combined']['Information']['Velocity_horizwind_offset_units'][0].decode('UTF-8')
         else:
             data_var = hdf2['Products']['Combined']['Information']['Velocity_horizwind_offset'][ka_inds, :].T
@@ -1941,7 +1959,13 @@ class Hiwrap(Radar):
         
         if dataset=='2020': # for files with combined Ku- and Ka-band data
             data_var = hdf['Products']['Ku']['Combined']['Information']['Velocity_horizwind_offset'][:].T
-            description_var = hdf['Products']['Ku']['Combined']['Information']['Velocity_horizwind_offset_description'][0].decode('UTF-8')
+            try:
+                description_var = hdf['Products']['Ku']['Combined']['Information']['Velocity_horizwind_offset_description'][0].decode('UTF-8')
+            except KeyError: # found missing var in 7 Feb 2020 file
+                description_var = (
+                    'The horizontal wind offset used to correct Doppler velocity '
+                    '[Vel_corr = Vel_uncorr - horizwind_offset + angle_offset. This is applied to all channels.'
+                )
             units_var = hdf['Products']['Ku']['Combined']['Information']['Velocity_horizwind_offset_units'][0].decode('UTF-8')
         else:
             data_var = hdf['Products']['Combined']['Information']['Velocity_horizwind_offset'][:].T
@@ -3197,6 +3221,54 @@ class Cpl(Lidar):
                 units='km**-1 sr**-1'
             )
         )
+        msf1064 = xr.DataArray(
+            data = np.ma.masked_where(
+                hdf['profile']['Mutiple_Scattering_Factor_1064'][:, tind] < 0.,
+                hdf['profile']['Mutiple_Scattering_Factor_1064'][:, tind]
+            ),
+            dims = ['gate', 'time'],
+            coords = dict(
+                gate = np.arange(len(hght1d)),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Multiple scattering factor profile at 1064 nm for each record',
+                units='#'
+            )
+        )
+        msf532 = xr.DataArray(
+            data = np.ma.masked_where(
+                hdf['profile']['Mutiple_Scattering_Factor_532'][:, tind] < 0.,
+                hdf['profile']['Mutiple_Scattering_Factor_532'][:, tind]
+            ),
+            dims = ['gate', 'time'],
+            coords = dict(
+                gate = np.arange(len(hght1d)),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Multiple scattering factor profile at 532 nm for each record',
+                units='#'
+            )
+        )
+        msf355 = xr.DataArray(
+            data = np.ma.masked_where(
+                hdf['profile']['Mutiple_Scattering_Factor_355'][:, tind] < 0.,
+                hdf['profile']['Mutiple_Scattering_Factor_355'][:, tind]
+            ),
+            dims = ['gate', 'time'],
+            coords = dict(
+                gate = np.arange(len(hght1d)),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Multiple scattering factor profile at 355 nm for each record',
+                units='#'
+            )
+        )
         ext1064 = xr.DataArray(
             data = np.ma.masked_where(
                 hdf['profile']['Extinction_Coefficient_1064'][:, tind] <= 0.,
@@ -3307,6 +3379,19 @@ class Cpl(Lidar):
                 units='#'
             )
         )
+        skycond = xr.DataArray(
+            data = hdf['profile']['Sky_Condition'][:, tind],
+            dims = ['gate', 'time'],
+            coords = dict(
+                gate = np.arange(len(hght1d)),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Cloud/aerosol flag (0:no clouds/aerosols; 1:aerosols; 2:clouds; 3: both clouds/aerosols',
+                units='#'
+            )
+        )
 
         # metadata for attributes
         try:
@@ -3325,13 +3410,17 @@ class Cpl(Lidar):
                 'pbsc_1064': pbsc1064,
                 'pbsc_532': pbsc532,
                 'pbsc_355': pbsc355,
+                'msf_1064': msf1064,
+                'msf_532': msf532,
+                'msf_355': msf355,
                 'dpol_1064': dpol1064,
                 'ext_1064': ext1064,
                 'ext_532': ext532,
                 'ext_355': ext355,
                 'cod_1064': cod1064,
                 'cod_532': cod532,
-                'cod_355': cod355
+                'cod_355': cod355,
+                'sky_flag': skycond
             },
             coords={
                 'gate': np.arange(len(hght1d)),
