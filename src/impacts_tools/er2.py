@@ -3379,8 +3379,8 @@ class Cpl(Lidar):
                 units='#'
             )
         )
-        skycond = xr.DataArray(
-            data = hdf['profile']['Sky_Condition'][:, tind],
+        ftype = xr.DataArray(
+            data = hdf['profile']['Feature_Type'][:, tind],
             dims = ['gate', 'time'],
             coords = dict(
                 gate = np.arange(len(hght1d)),
@@ -3388,7 +3388,23 @@ class Cpl(Lidar):
                 lat = lat,
                 lon = lon),
             attrs = dict(
-                description='Cloud/aerosol flag (0:no clouds/aerosols; 1:aerosols; 2:clouds; 3: both clouds/aerosols',
+                description='Feature mask (0: Invalid; 1: Cloud; 2: Undetermined; 3: Aerosol)',
+                units='#'
+            )
+        )
+        fscore = xr.DataArray(
+            data = np.ma.masked_where(
+            	hdf['profile']['Feature_Type_Score'][:, tind] < -10,
+            	hdf['profile']['Feature_Type_Score'][:, tind]
+            ).
+            dims = ['gate', 'time'],
+            coords = dict(
+                gate = np.arange(len(hght1d)),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Feature type confidence (-10/10: High aerosol/cloud; -1/1: Low aerosol/cloud)',
                 units='#'
             )
         )
@@ -3420,7 +3436,8 @@ class Cpl(Lidar):
                 'cod_1064': cod1064,
                 'cod_532': cod532,
                 'cod_355': cod355,
-                'sky_flag': skycond
+                'feature': ftype,
+                'feature_score': fscore
             },
             coords={
                 'gate': np.arange(len(hght1d)),
