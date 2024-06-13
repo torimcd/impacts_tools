@@ -3223,8 +3223,8 @@ class Cpl(Lidar):
         )
         msf1064 = xr.DataArray(
             data = np.ma.masked_where(
-                hdf['profile']['Mutiple_Scattering_Factor_1064'][:, tind] < 0.,
-                hdf['profile']['Mutiple_Scattering_Factor_1064'][:, tind]
+                hdf['profile']['Multiple_Scattering_Factor_1064'][:, tind] < 0.,
+                hdf['profile']['Multiple_Scattering_Factor_1064'][:, tind]
             ),
             dims = ['gate', 'time'],
             coords = dict(
@@ -3239,8 +3239,8 @@ class Cpl(Lidar):
         )
         msf532 = xr.DataArray(
             data = np.ma.masked_where(
-                hdf['profile']['Mutiple_Scattering_Factor_532'][:, tind] < 0.,
-                hdf['profile']['Mutiple_Scattering_Factor_532'][:, tind]
+                hdf['profile']['Multiple_Scattering_Factor_532'][:, tind] < 0.,
+                hdf['profile']['Multiple_Scattering_Factor_532'][:, tind]
             ),
             dims = ['gate', 'time'],
             coords = dict(
@@ -3255,8 +3255,8 @@ class Cpl(Lidar):
         )
         msf355 = xr.DataArray(
             data = np.ma.masked_where(
-                hdf['profile']['Mutiple_Scattering_Factor_355'][:, tind] < 0.,
-                hdf['profile']['Mutiple_Scattering_Factor_355'][:, tind]
+                hdf['profile']['Multiple_Scattering_Factor_355'][:, tind] < 0.,
+                hdf['profile']['Multiple_Scattering_Factor_355'][:, tind]
             ),
             dims = ['gate', 'time'],
             coords = dict(
