@@ -3396,7 +3396,7 @@ class Cpl(Lidar):
             data = np.ma.masked_where(
             	hdf['profile']['Feature_Type_Score'][:, tind] < -10,
             	hdf['profile']['Feature_Type_Score'][:, tind]
-            ).
+            ),
             dims = ['gate', 'time'],
             coords = dict(
                 gate = np.arange(len(hght1d)),
