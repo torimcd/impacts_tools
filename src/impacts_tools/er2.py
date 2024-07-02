@@ -3408,6 +3408,35 @@ class Cpl(Lidar):
                 units='#'
             )
         )
+        cldphase = xr.DataArray(
+            data = hdf['profile']['Cloud_Phase'][:, tind],
+            dims = ['gate', 'time'],
+            coords = dict(
+                gate = np.arange(len(hght1d)),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Cloud phase (0: Invalid; 1: Liquid; 2: Undetermined; 3: Ice)',
+                units='#'
+            )
+        )
+        cldscore = xr.DataArray(
+            data = np.ma.masked_where(
+            	hdf['profile']['Cloud_Phase_Score'][:, tind] < -10,
+            	hdf['profile']['Cloud_Phase_Score'][:, tind]
+            ),
+            dims = ['gate', 'time'],
+            coords = dict(
+                gate = np.arange(len(hght1d)),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Cloud phase confidence (-10/10: High liquid/ice; -1/1: Low liquid/ice)',
+                units='#'
+            )
+        )
 
         # metadata for attributes
         try:
@@ -3437,7 +3466,9 @@ class Cpl(Lidar):
                 'cod_532': cod532,
                 'cod_355': cod355,
                 'feature': ftype,
-                'feature_score': fscore
+                'feature_score': fscore,
+                'cloud_phase': cldphase,
+                'phase_score': cldscore,
             },
             coords={
                 'gate': np.arange(len(hght1d)),
