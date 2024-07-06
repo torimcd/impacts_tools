@@ -564,6 +564,17 @@ class Match(ABC):
                     ),
                     units = '#'
             )
+            for wavelength_pair in ['1064_532', '1064_355', '532_355']:
+            	match_dict[f'cr_{wavelength_pair}'] = dict(
+                    data = np.ma.masked_where(
+                        prind1d == 0, lidar_qc[f'cr_{wavelength_pair}'].values[prind1d]
+                    ),
+                    description = (
+                        f'Mean color ratio between {wavelength_pair.replace("_", " and ")} '
+                        'nm among matched lidar gates'
+                    ),
+                    units = '#'
+                )
             for wavelength in [1064, 532, 355]:
                 match_dict[f'ext_{wavelength}'] = dict(
                     data = np.ma.masked_where(
