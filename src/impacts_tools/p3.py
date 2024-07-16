@@ -44,7 +44,8 @@ def parse_header(f, date, stream='default'):
             delim2 = ','
         hdr = {}
         hdr['NLHEAD'], hdr['FFI'] = f.readline().rstrip('\n').split(delim)
-
+        hdr['NLHEAD'] = int(hdr['NLHEAD'])
+        
         # Check that the file is indeed NASA AMES 1001
         if hdr['FFI'].replace(' ', '') != '1001':
             print("Check file type, looks like it's not FFI 1001")
@@ -70,6 +71,17 @@ def parse_header(f, date, stream='default'):
         hdr['VMISS'] = [float(x) for x in vmiss]
         hdr['VNAME'] = ['time']
         hdr['VUNIT'] = ['seconds since ' + date]
+        
+        # fix number headers and vars if needed
+        if (len(hdr['VSCAL']) == len(hdr['VMISS'])) and (len(hdr['VSCAL']) < hdr['NV']):
+            print(
+                'Invalid number of variables in header data '
+                f'(reported as {hdr["NV"]}, should be {len(hdr["VSCAL"])}). Fixing...'
+            )
+            NV_ofset = hdr['NV'] - len(hdr['VSCAL'])
+            hdr['NLHEAD'] -= NV_ofset
+            hdr['NV'] -= NV_ofset
+        
         for nvar in range(hdr['NV']):
             if stream == 'und':
                 line_buffer = f.readline().rstrip('].\n').split('[', -1)
@@ -107,9 +119,9 @@ class P3():
         """
         xarray.Dataset of P-3 meteorological and navigation variables and attributes
         Dimensions:
-            - time: np.array(np.datetime64[ms]) - The UTC time stamp
+            - time: np.array(np.datetime64[ns]) - The UTC time stamp
         Coordinates:
-            - time (time): np.array(np.datetime64[ms]) - The UTC time stamp
+            - time (time): np.array(np.datetime64[ns]) - The UTC time stamp
         Variables:
             - lat (time): xarray.DataArray(float) - Latitude (degrees)
             - lon (time): xarray.DataArray(float) - Longitude (degrees)
@@ -120,7 +132,7 @@ class P3():
             - tas (time) : xarray.DataArray(float) - Aircraft true air speed (m/s)
             - ias (time) : xarray.DataArray(float) - Aircraft indicated air speed (m/s)
             - mach (time) : xarray.DataArray(float) - Aircraft mach number
-            - zvel_p3 (time) : xarray.DataArray(float) - Aircraft vertical speed (m/s)
+            - zvel_p3 (time) : xarray.-DataArray(float) - Aircraft vertical speed (m/s)
             - heading (time) : xarray.DataArray(float) - Aircraft true heading (deg clockwise from +y)
             - track (time) : xarray.DataArray(float) - Aircraft track angle (deg clockwise from +y)
             - drift (time) : xarray.DataArray(float) - Aircraft drift angle (deg clockwise from +y)
@@ -177,6 +189,7 @@ class P3():
         '''
         hdr = {}
         hdr['NLHEAD'], hdr['FFI'] = f.readline().rstrip('\n').split(',')
+        hdr['NLHEAD'] = int(hdr['NLHEAD'])
 
         # Check that the file is indeed NASA AMES 1001
         if hdr['FFI'].replace(' ', '') != '1001':
@@ -219,7 +232,7 @@ class P3():
 
         return hdr
     
-    def readfile(self, filepath, date, start_time=None, end_time=None, tres='1S', fmt='ames'):
+    def readfile(self, filepath, date, start_time=None, end_time=None, tres='1s', fmt='ames'):
         """
         Reads the P-3 Met-Nav data file and unpacks the fields into an xarray.Dataset
         
@@ -249,7 +262,7 @@ class P3():
 
             # parse the data
             data_raw = np.genfromtxt(
-                filepath, delimiter=',', skip_header=int(header['NLHEAD']),
+                filepath, delimiter=',', skip_header=header['NLHEAD'],
                 missing_values=header['VMISS'], usemask=True, filling_values=np.nan
             )
 
@@ -279,7 +292,7 @@ class P3():
             # compute time
             time = np.array([
                 np.datetime64(date) + np.timedelta64(int(readfile['time'][i]), 's')
-                for i in range(len(readfile['time']))], dtype='datetime64[ms]'
+                for i in range(len(readfile['time']))], dtype='datetime64[ns]'
             )
 
             # populate dataset attributes
@@ -309,7 +322,7 @@ class P3():
                 'Aircraft_Sun_Elevation', 'Sun_Azimuth', 'Aircraft_Sun_Azimuth'
             ]
             dtypes = [
-                str, 'datetime64[s]', float, float, float, float, float, float, float, float,
+                str, 'datetime64[ns]', float, float, float, float, float, float, float, float,
                 float, float, float, float, float, float, float, float, float, float, float,
                 float, float, float, float, float, float, float, float, float, float, float,
                 float,
@@ -698,7 +711,7 @@ class P3():
                 end_time = str(np.datetime_as_string(ds['time'][-1]))
                 
             # remove 1 s from end_time if tres > 1 (for slice() function)
-            if pd.to_timedelta(tres) > pd.to_timedelta('1S'):
+            if pd.to_timedelta(tres) > pd.to_timedelta('1s'):
                 end_time = str(
                     np.datetime_as_string(
                         np.datetime64(end_time) - np.timedelta64(1, 's')
@@ -708,9 +721,9 @@ class P3():
                 
                 
         # resample (average) the dataset if needed
-        if pd.to_timedelta(tres) > pd.to_timedelta('1S'):
+        if pd.to_timedelta(tres) > pd.to_timedelta('1s'):
             ds = ds.resample(time=tres).mean(skipna=True, keep_attrs=True)
-        elif pd.to_timedelta(tres) < pd.to_timedelta('1S'):
+        elif pd.to_timedelta(tres) < pd.to_timedelta('1s'):
             print('Upsampling data is not supported at this time.')
             
         return ds
@@ -776,11 +789,11 @@ class Instrument(ABC):
         dummy_times = xr.Dataset(
             coords = {time_dim: dt_range}
         )
+        freqstr = pd.tseries.frequencies.to_offset(td_p3).freqstr
+        if freqstr == 'S': # bug fix
+            freqstr = '1S'
         
-        return (
-            self.data.interp_like(dummy_times),
-            pd.tseries.frequencies.to_offset(td_p3).freqstr
-        )
+        return (self.data.interp_like(dummy_times), freqstr)
     
     def trim_time_bounds(self, start_time=None, end_time=None, tres='1S'):
         """
@@ -857,13 +870,23 @@ class Instrument(ABC):
                 if 'HVPS' in self.instruments:
                     mean_vars.append('active_time_hvps')
                     
-                ds_sum_vars = self.data[sum_vars].resample(time=tres).sum(
-                    skipna=True, keep_attrs=True)
+                ds_sum_vars = self.data[sum_vars].resample(time=tres).reduce(
+                    np.nansum, keep_attrs=True)
+                
                 ds_mean_nan_vars = self.data[mean_nan_vars].fillna(0.).resample(time=tres).mean(
                     skipna=True, keep_attrs=True)
-                ds_mean_nan_vars = ds_mean_nan_vars.where(ds_mean_nan_vars != 0.)
-                ds_mean_vars = self.data[mean_vars].resample(time=tres).mean(
-                    skipna=True, keep_attrs=True)
+                ds_mean_nan_vars['ND'].values = (
+                    ds_sum_vars['count'] / ds_sum_vars['sv'] / self.data['bin_width']
+                ).values
+                if 'count_habit' in self.data.data_vars:
+                    ds_mean_nan_vars['ND_habit'].values = (
+                        ds_sum_vars['count_habit'] / ds_sum_vars['sv'] / self.data['bin_width']
+                    ).values
+                ds_mean_nan_vars = ds_mean_nan_vars.where(ds_mean_nan_vars > 0.)
+                
+                ds_mean_vars = self.data[mean_vars].resample(time=tres).reduce(
+                    np.nanmean, keep_attrs=True)
+
                 if 'count_habit' in self.data.data_vars:
                     ds_downsampled = xr.merge(
                         [ds_sum_vars, ds_mean_nan_vars, ds_mean_vars]
@@ -998,11 +1021,11 @@ class Tamms(Instrument):
         """
         xarray.Dataset of TAMMS variables and attributes
         Dimensions:
-            - time_raw: np.array(np.datetime64[ms]) - The UTC time stamp at the native resolution (20 Hz)
-            - time: np.array(np.datetime64[ms]) - The UTC time start of the N-s upsampled interval
+            - time_raw: np.array(np.datetime64[ns]) - The UTC time stamp at the native resolution (20 Hz)
+            - time: np.array(np.datetime64[ns]) - The UTC time start of the N-s upsampled interval
         Coordinates:
-            - time_raw (time_raw): np.array(np.datetime64[ms]) - The UTC time stamp  at the native resolution (20 Hz)
-            - time (time): np.array(np.datetime64[ms]) - The UTC time start of the N-s upsampled interval
+            - time_raw (time_raw): np.array(np.datetime64[ns]) - The UTC time stamp  at the native resolution (20 Hz)
+            - time (time): np.array(np.datetime64[ns]) - The UTC time start of the N-s upsampled interval
         Variables:
             - lat_raw (time_raw): xarray.DataArray(float) - Latitude (degrees)
             - lon_raw (time_raw): xarray.DataArray(float) - Longitude (degrees)
@@ -1034,7 +1057,7 @@ class Tamms(Instrument):
         name_dict = {'time_raw': 'time'}
         for var in list(ds_downsampled.data_vars):
             name_dict[var] = var.split('_raw')[0]
-        ds_downsampled = ds_downsampled.rename(name_dict=name_dict)
+        ds_downsampled = ds_downsampled.rename_vars(name_dict=name_dict)
         
         # compute the vertical motion standard deviation for downsampled data
         wwnd_std = xr.DataArray(
@@ -1083,7 +1106,7 @@ class Tamms(Instrument):
 
         # parse the data
         data_raw = np.genfromtxt(
-            filepath, delimiter=',', skip_header=int(header['NLHEAD']),
+            filepath, delimiter=',', skip_header=header['NLHEAD'],
             missing_values=header['VMISS'], usemask=True, filling_values=np.nan
         )
 
@@ -1115,7 +1138,7 @@ class Tamms(Instrument):
         time = np.array([
             np.datetime64(date) + np.timedelta64(int(sec[i]), 's') +
             np.timedelta64(int(np.round(1000. * sec_frac[i])), 'ms')
-            for i in range(len(readfile['time']))], dtype='datetime64[ms]'
+            for i in range(len(readfile['time']))], dtype='datetime64[ns]'
         )
 
         # populate data arrays
@@ -1135,16 +1158,24 @@ class Tamms(Instrument):
                 description='Aircraft longitude',
                 units='degrees_east')
         )
+        try:
+        	galt_data = readfile['GPS_alt_m']
+        except KeyError:
+        	galt_data = readfile['GPSalt_m']
         alt_gps = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['GPS_alt_m']),
+            data = np.ma.masked_invalid(galt_data),
             dims = ['time_raw'],
             coords = dict(time_raw = time),
             attrs = dict(
                 description='Aircraft GPS altitude (mean sea level)',
                 units='meters')
         )
+        try:
+        	palt_data = readfile['PALT_ft']
+        except KeyError:
+        	palt_data = readfile['Palt_ft']
         alt_pres = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['PALT_ft']),
+            data = np.ma.masked_invalid(palt_data),
             dims = ['time_raw'],
             coords = dict(time_raw = time),
             attrs = dict(
@@ -1242,9 +1273,6 @@ class Tamms(Instrument):
 
         return ds
 
-# ====================================== #
-# CDP Distributions
-# ====================================== #
 class Cdp(Instrument):
     """
     A class to represent the CDP flown on the P-3 during the IMPACTS field campaign.
@@ -1286,7 +1314,7 @@ class Cdp(Instrument):
             - bin_left (size): np.array(np.float64) - Size bin left endpoint (um)
             - bin_right (size): np.array(np.float64) - Size bin right endpoint (um)
             - bin_width (size): np.array(np.float64) - Size bin width (um)
-            - time (time): np.array(np.datetime64[ms]) - The UTC time start of the N-s upsampled interval
+            - time (time): np.array(np.datetime64[ns]) - The UTC time start of the N-s upsampled interval
         Variables:
             - count (size, time): xarray.DataArray(float) - Drop count per size bin (#)
             - ND (size, time): xarray.DataArray(float) - Number distribution function (DSD) (cm-4)
@@ -1344,7 +1372,7 @@ class Cdp(Instrument):
                 header = parse_header(open(file, 'r'), date, stream='und')
                 
                 data_raw = np.genfromtxt(
-                    file, delimiter=None, skip_header=int(header['NLHEAD']),
+                    file, delimiter=None, skip_header=header['NLHEAD'],
                     missing_values=header['VMISS'], usemask=True, filling_values=np.nan
                 )
                 
@@ -1367,7 +1395,7 @@ class Cdp(Instrument):
                 # compute time
                 time = np.array([
                     np.datetime64(date) + np.timedelta64(int(data['time'][i]), 's')
-                    for i in range(len(data['time']))], dtype='datetime64[ms]'
+                    for i in range(len(data['time']))], dtype='datetime64[ns]'
                 )
                 
                 # populate data arrays common to both datastreams (size bin vars)
@@ -1540,9 +1568,9 @@ class Und(Instrument):
         xarray.Dataset of UND summary variables and attributes.
         Some instruments (WCM, RICE-2) not available all deployments.
         Dimensions:
-            - time: np.array(np.datetime64[ms]) - The UTC time start of the N-s upsampled interval
+            - time: np.array(np.datetime64[ns]) - The UTC time start of the N-s upsampled interval
         Coordinates:
-            - time (time): np.array(np.datetime64[ms]) - The UTC time start of the N-s upsampled interval
+            - time (time): np.array(np.datetime64[ns]) - The UTC time start of the N-s upsampled interval
         Variables:
             - lon (time) : xarray.DataArray(float) - Aircraft longitude (degrees_east)
             - lat (time) : xarray.DataArray(float) - Aircraft latitude (degrees_north)
@@ -1622,7 +1650,7 @@ class Und(Instrument):
 
         # parse the data
         data_raw = np.genfromtxt(
-            filepath, skip_header=int(header['NLHEAD']),
+            filepath, skip_header=header['NLHEAD'],
             missing_values=header['VMISS'], usemask=True, filling_values=np.nan
         )
 
@@ -1654,174 +1682,14 @@ class Und(Instrument):
         time = np.array([
             np.datetime64(date) + np.timedelta64(int(sec[i]), 's') +
             np.timedelta64(int(np.round(1000. * sec_frac[i])), 'ms')
-            for i in range(len(readfile['time']))], dtype='datetime64[ms]'
+            for i in range(len(readfile['time']))], dtype='datetime64[ns]'
         )
 
         # populate data arrays
-        temp = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft ambient temperature']),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Aircraft ambient temperature',
-                units = 'degrees_Celsius'
-            )
-        )
-        spress = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft static pressure']),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Aircraft static pressure',
-                units = 'hPa'
-            )
-        )
-        td = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft dew point temperature']),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Aircraft dew point temperature',
-                units = 'degrees_Celsius'
-            )
-        )
         if '2020' in date:
             vname_tas = 'True Air Speed'
         else:
             vname_tas = 'Aircraft True Air Speed'
-        tas = xr.DataArray(
-            data = np.ma.masked_invalid(readfile[vname_tas]),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Aircraft true air speed',
-                units = 'm/s'
-            )
-        )
-        palt = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Pressure Altitude']),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Pressure altitude',
-                units = 'm'
-            )
-        )
-        track = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft Track Angle']),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Aircraft track angle',
-                units = 'degrees'
-            )
-        )
-        ias = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft Indicated Air Speed']),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Aircraft indicated air speed',
-                units = 'm/s'
-            )
-        )
-        grdspd = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft Ground Speed']),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Aircraft ground speed',
-                units = 'm/s'
-            )
-        )
-        palt_ac = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft Presure Altitude']),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Aircraft pressure altitude',
-                units = 'feet'
-            )
-        )
-        alt = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft GPS Altitude MSL']),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Aircraft GPS altitude (above mean sea level)',
-                units = 'm'
-            )
-        )
-        wspd = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft wind speed']),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Aircraft wind speed',
-                units = 'm/s'
-            )
-        )
-        wdir = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft wind direction']),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Aircraft wind direction',
-                units = 'degrees'
-            )
-        )
-        roll = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft Roll Angle']),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Aircraft roll angle',
-                units = 'degrees'
-            )
-        )
-        pitch = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft Pitch Angle']),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Aircraft pitch angle',
-                units = 'degrees'
-            )
-        )
-        head = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft True Heading']),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Aircraft true heading',
-                units = 'degrees'
-            )
-        )
-        w = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft Vertical Velocity']),
-            dims = 'time',
-            coords = dict(time=time),
-            attrs = dict(
-                description = 'Aircraft vertical velocity',
-                units = 'm/s'
-            )
-        )
-        lat = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft latitude']),
-            dims = 'time',
-            coords = dict(time = time),
-            attrs = dict(
-                description='Aircraft latitude',
-                units='degrees_north')
-        )
-        lon = xr.DataArray(
-            data = np.ma.masked_invalid(readfile['Aircraft longitude']),
-            dims = 'time',
-            coords = dict(time = time),
-            attrs = dict(
-                description='Aircraft longitude',
-                units='degrees_east')
-        )
         lwc_king = xr.DataArray(
             data = np.ma.masked_invalid(
                 readfile['Liquid Water Content based on King Probe measurement adjusted']
@@ -1883,19 +1751,187 @@ class Und(Instrument):
                 description='Frequency from the Rosemont Icing Detector',
                 units='Hz')
         )
-        data_vars = {
-            'lon': lon, 'lat': lat,
-            'alt_gps': alt, 'alt_pres': palt_ac,
-            'grnd_spd': grdspd, 'tas': tas, 'ias': ias,
-            'zvel': w,
-            'heading': head, 'track': track, 'pitch': pitch, 'roll': roll,
-            'temp': temp, 'dwpt': td,
-            'pres_static': spress,
-            'wspd': wspd, 'wdir': wdir,
-            'lwc_king': lwc_king, 'lwc_cdp': lwc_cdp,
-            'mdd_cdp': mdd_cdp, 're_cdp': re_cdp, 'n_cdp': n_cdp,
-            'freq_rice': ricefreq
-        }
+        if '2020' in date:
+            data_vars = {
+                'lwc_king': lwc_king, 'lwc_cdp': lwc_cdp,
+                'mdd_cdp': mdd_cdp, 're_cdp': re_cdp, 'n_cdp': n_cdp,
+                'freq_rice': ricefreq
+            }
+        else:
+            temp = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft ambient temperature']),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Aircraft ambient temperature',
+                    units = 'degrees_Celsius'
+                )
+            )
+            spress = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft static pressure']),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Aircraft static pressure',
+                    units = 'hPa'
+                )
+            )
+            td = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft dew point temperature']),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Aircraft dew point temperature',
+                    units = 'degrees_Celsius'
+                )
+            )
+            tas = xr.DataArray(
+                data = np.ma.masked_invalid(readfile[vname_tas]),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Aircraft true air speed',
+                    units = 'm/s'
+                )
+            )
+            palt = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Pressure Altitude']),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Pressure altitude',
+                    units = 'm'
+                )
+            )
+            track = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft Track Angle']),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Aircraft track angle',
+                    units = 'degrees'
+                )
+            )
+            ias = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft Indicated Air Speed']),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Aircraft indicated air speed',
+                    units = 'm/s'
+                )
+            )
+            grdspd = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft Ground Speed']),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Aircraft ground speed',
+                    units = 'm/s'
+                )
+            )
+            palt_ac = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft Presure Altitude']),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Aircraft pressure altitude',
+                    units = 'feet'
+                )
+            )
+            alt = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft GPS Altitude MSL']),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Aircraft GPS altitude (above mean sea level)',
+                    units = 'm'
+                )
+            )
+            wspd = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft wind speed']),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Aircraft wind speed',
+                    units = 'm/s'
+                )
+            )
+            wdir = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft wind direction']),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Aircraft wind direction',
+                    units = 'degrees'
+                )
+            )
+            roll = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft Roll Angle']),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Aircraft roll angle',
+                    units = 'degrees'
+                )
+            )
+            pitch = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft Pitch Angle']),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Aircraft pitch angle',
+                    units = 'degrees'
+                )
+            )
+            head = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft True Heading']),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Aircraft true heading',
+                    units = 'degrees'
+                )
+            )
+            w = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft Vertical Velocity']),
+                dims = 'time',
+                coords = dict(time=time),
+                attrs = dict(
+                    description = 'Aircraft vertical velocity',
+                    units = 'm/s'
+                )
+            )
+            lat = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft latitude']),
+                dims = 'time',
+                coords = dict(time = time),
+                attrs = dict(
+                    description='Aircraft latitude',
+                    units='degrees_north')
+            )
+            lon = xr.DataArray(
+                data = np.ma.masked_invalid(readfile['Aircraft longitude']),
+                dims = 'time',
+                coords = dict(time = time),
+                attrs = dict(
+                    description='Aircraft longitude',
+                    units='degrees_east')
+            )
+            
+            data_vars = {
+                'lon': lon, 'lat': lat,
+                'alt_gps': alt, 'alt_pres': palt_ac,
+                'grnd_spd': grdspd, 'tas': tas, 'ias': ias,
+                'zvel': w,
+                'heading': head, 'track': track, 'pitch': pitch, 'roll': roll,
+                'temp': temp, 'dwpt': td,
+                'pres_static': spress,
+                'wspd': wspd, 'wdir': wdir,
+                'lwc_king': lwc_king, 'lwc_cdp': lwc_cdp,
+                'mdd_cdp': mdd_cdp, 're_cdp': re_cdp, 'n_cdp': n_cdp,
+                'freq_rice': ricefreq
+            }
         if '2023' in date:
             ricefreq2 = xr.DataArray(
                 data = np.ma.masked_invalid(readfile['The current Sensor2']),
@@ -1980,10 +2016,199 @@ class Und(Instrument):
         )
 
         return ds
+    
+class Wisper(Instrument):
+    """
+    A class to represent the WISPER instruments summary on the P-3 during the IMPACTS field campaign.
+    Inherits from Instrument()
+    Contribution from Nina Maherndl
+    
+    Parameters
+    ----------
+    filepath: str
+        File path to the TAMMS data file
+    p3_object: impacts_tools.p3.P3() object or None
+        The optional P-3 Met-Nav object to automatically trim and average the TAMMS data
+    start_time: np.datetime64 or None
+        The initial time of interest eg. if looking at a single flight leg
+    end_time: np.datetime64 or None
+        The final time of interest eg. if looking at a single flight leg
+    tres: str
+        The time interval to average over (e.g., '5S' for 5 seconds)
+    """
+
+    def __init__(self, filepath, date, p3_object=None, start_time=None, end_time=None, tres='1S'):
+        self.name = 'WISPER Probe'
         
-# ====================================== #
-# PSDs
-# ====================================== #
+        # read the raw data
+        self.data = self.readfile(filepath, date)
+        """
+        xarray.Dataset of Wisper variables and attributes. 
+        Dimensions:
+            - time: np.array(np.datetime64[ms]) - The UTC time start of the N-s upsampled interval
+        Coordinates:
+            - time (time): np.array(np.datetime64[ms]) - The UTC time start of the N-s upsampled interval
+        Variables:
+            - cwc (time) : xarray.DataArray(float) - CWC, g/(m^3), condensed water concentration (ice + liquid water)
+
+        """
+        
+        # trim dataset to P-3 time bounds or from specified start/end
+        if p3_object is not None:
+            self.data, tres = self.trim_to_p3(p3_object)
+        elif (start_time is not None) or (end_time is not None):
+            self.data = self.trim_time_bounds(start_time, end_time, tres)
+            
+        # downsample data if specified by the P-3 Met-Nav data or tres argument
+        self.data = self.downsample(tres)
+        
+    def readfile(self, filepath, date):
+        """
+        Reads the WISPER data file and unpacks the fields into an xarray.Dataset
+
+        Parameters
+        ----------
+        filepath : str
+            Path to the data file
+        date: str
+            Flight start date in YYYY-mm-dd format
+        p3_object: impacts_tools.p3.P3() or None
+            P-3 Met-Nav object to optionally contrain times and average data
+        start_time : np.datetime64 or None
+            The initial time of interest
+        end_time : np.datetime64 or None
+            The final time of interest
+        tres: str
+            The time interval to average over (e.g., '5S' for 5 seconds)
+
+        Returns
+        -------
+        data : xarray.Dataset
+            The unpacked dataset
+        """
+
+        # get header info following the NASA AMES format
+        header = parse_header(open(filepath, 'r', encoding = 'latin1'), date)
+
+        # parse the data
+        data_raw = np.genfromtxt(
+            filepath, delimiter=',', skip_header=header['NLHEAD'],
+            missing_values=header['VMISS'], usemask=True, filling_values=np.nan, encoding = 'latin1'
+        )
+        
+
+        # construct dictionary of variable data and metadata
+        readfile = {}
+        for jj, unit in enumerate(header['VUNIT']):
+            header['VUNIT'][jj] = unit.split(',')[0]
+        for jj, name in enumerate(header['VNAME']):
+            readfile[name] = np.array(data_raw[:, jj] * header['VSCAL'][jj])
+            readfile[name][readfile[name]==header['VMISS'][jj]] = np.nan
+
+        # populate dataset attributes
+        p3_attrs = {
+            'Experiment': 'IMPACTS',
+            'Platform': 'P-3',
+            'Mission PI': 'Lynn McMurdie (lynnm@uw.edu)'}
+        instrum_info_counter = 1
+        for ii, comment in enumerate(header['NCOM'][:-1]): # add global attrs
+            parsed_comment = comment.split(':')
+            if len(parsed_comment) > 1:
+                p3_attrs[parsed_comment[0]] = parsed_comment[1][1:]
+            else: # handles multiple instrument info lines in *_R0.ict files
+                instrum_info_counter += 1
+                p3_attrs[
+                    'INSTRUMENT_INFO_'+str(instrum_info_counter)] = parsed_comment[0][1:]
+
+        # compute time
+        sec_frac, sec = np.modf(readfile['time'])
+        time = np.array([
+            np.datetime64(date) + np.timedelta64(int(sec[i]), 's') +
+            np.timedelta64(int(np.round(1000. * sec_frac[i])), 'ms')
+            for i in range(len(readfile['time']))], dtype='datetime64[ms]'
+        )
+
+        cwc_wisper = xr.DataArray(
+            data = np.ma.masked_invalid(
+                readfile['CWC']
+            ),
+            dims = 'time',
+            coords = dict(time = time),
+            attrs = dict(
+                description='Condensed water concentration (ice + liquid water)',
+                units='g m-3'))
+
+        h20_vap_wisper = xr.DataArray(
+            data = np.ma.masked_invalid(
+                readfile['H2O_VAP']
+            ),
+            dims = 'time',
+            coords = dict(time = time),
+            attrs = dict(
+                description='Water vapor mixing ratio',
+                units='ppm'))
+
+        deltad_c_wisper = xr.DataArray(
+            data = np.ma.masked_invalid(
+                readfile['DELTAD_C']
+            ),
+            dims = 'time',
+            coords = dict(time = time),
+            attrs = dict(
+                description='HDO/H2(16)O ratio in condensed water',
+                units='permil'))
+
+        deltao18_c_wisper = xr.DataArray(
+            data = np.ma.masked_invalid(
+                readfile['DELTAO18_C']
+            ),
+            dims = 'time',
+            coords = dict(time = time),
+            attrs = dict(
+                description='H2(18)O/H2(16)O ratio in condensed water',
+                units='permil'))
+
+        deltad_v_wisper = xr.DataArray(
+            data = np.ma.masked_invalid(
+                readfile['DELTAD_V']
+            ),
+            dims = 'time',
+            coords = dict(time = time),
+            attrs = dict(
+                description='HDO/H2(16)O ratio in water vapor',
+                units='permil'))
+        
+        deltao18_v_wisper = xr.DataArray(
+            data = np.ma.masked_invalid(
+                readfile['DELTAO18_V']
+            ),
+            dims = 'time',
+            coords = dict(time = time),
+            attrs = dict(
+                description='H2(18)O/H2(16)O ratio in water vapor',
+                units='permil'))
+
+        data_vars = {
+            'cwc': cwc_wisper,
+            'h20_vap': h20_vap_wisper,
+            'deltad_c': deltad_c_wisper,
+            'deltao18_c': deltao18_c_wisper,
+            'deltad_v': deltad_v_wisper,
+            'deltao18_v': deltao18_v_wisper
+
+        }
+ 
+        # put everything together into an XArray Dataset
+        ds = xr.Dataset(
+            data_vars = data_vars,
+            coords={
+                'time': time
+            },
+            attrs=p3_attrs
+        )
+
+        return ds
+
 class Psd(Instrument):
     """
     A class to represent the PSDs from optical array probes flown on the P-3 during the IMPACTS field campaign.
@@ -2130,16 +2355,34 @@ class Psd(Instrument):
                         data['habitsd'].values.T) * np.tile(
                         np.moveaxis(np.atleast_3d(sv_temp), -1, 0), (10, 1, 1)) * np.tile(
                         np.atleast_3d(bin_width), (10, 1, sv_temp.shape[1]))
-                    count_habit_temp = np.array([
-                        count_habit_raw[3, :, :], count_habit_raw[0, :, :],
-                        np.nansum(count_habit_raw[1:3, :, :], axis=0),
-                        count_habit_raw[4, :, :], count_habit_raw[5, :, :],
-                        count_habit_raw[6, :, :], count_habit_raw[7, :, :],
-                        count_habit_raw[8, :, :]])
+                    
                     ND_temp = np.ma.masked_where(
                         count_temp==0.,
                         count_temp / sv_temp / np.tile(np.atleast_2d(bin_width).T,
                                              (1, count_temp.shape[1])))
+                    if ('Habit_Scheme' in data.attrs) and (
+                            'Schima' in data.attrs['Habit_Scheme']): # new habit scheme
+                        count_habit_temp = np.array([
+                            count_habit_raw[3, :, :], count_habit_raw[0, :, :],
+                            count_habit_raw[1, :, :], count_habit_raw[4, :, :],
+                            count_habit_raw[5, :, :], count_habit_raw[6, :, :],
+                            count_habit_raw[7, :, :], count_habit_raw[8, :, :],
+                            count_habit_raw[2, :, :]])
+                        habits = [
+                            'Tiny', 'Spherical', 'Linear', 'Hexagonal', 'Irregular',
+                            'Graupel', 'Dendrite', 'Aggregate', 'Other'
+                        ]
+                    else: # legacy Holroyd habit; combine linear and oriented
+                        count_habit_temp = np.array([
+                            count_habit_raw[3, :, :], count_habit_raw[0, :, :],
+                            np.nansum(count_habit_raw[1:3, :, :], axis=0),
+                            count_habit_raw[4, :, :], count_habit_raw[5, :, :],
+                            count_habit_raw[6, :, :], count_habit_raw[7, :, :],
+                            count_habit_raw[8, :, :]])
+                        habits = [
+                            'Tiny', 'Spherical', 'Linear', 'Hexagonal', 'Irregular',
+                            'Graupel', 'Dendrite', 'Aggregate'
+                        ]
                     ND_habit_temp = np.ma.masked_where(
                         count_habit_temp==0.,
                         count_habit_temp / sv_temp /
@@ -2149,13 +2392,13 @@ class Psd(Instrument):
                                )
                     )
                     ar_temp = data['mean_area_ratio'].values.T
-                    asr_temp = data['mean_aspect_ratio_ellipse'].values.T
+                    if 'mean_aspect_ratio_ellipse' in data.data_vars:
+                        asr_temp = data['mean_aspect_ratio_ellipse'].values.T
+                    else:
+                        asr_temp = np.nan * np.zeros(ar_temp.shape)
                     active_time_temp = data['sum_IntArr'].values
                 
                 # establish the data arrays
-                habits = [
-                    'Tiny', 'Spherical', 'Linear', 'Hexagonal', 'Irregular',
-                    'Graupel', 'Dendrite', 'Aggregate']
                 bin_mid = xr.DataArray(
                     data=bin_mid, dims = 'size',
                     attrs = dict(
@@ -2342,6 +2585,15 @@ class Psd(Instrument):
         else: # both 2D-S and HVPS available, add the probe active time for each
             ds_merged['active_time_2ds'] = ds_list[0]['active_time']
             ds_merged['active_time_hvps'] = ds_list[1]['active_time']
+            
+        # final ND correction
+        ds_merged['ND'].values = (
+            ds_merged['count'] / ds_merged['sv'] / ds_merged['bin_width']
+        ).values
+        if 'count_habit' in ds_merged.data_vars:
+            ds_merged['ND_habit'].values = (
+                ds_merged['count_habit'] / ds_merged['sv'] / ds_merged['bin_width']
+            ).values
                         
         return ds_merged
     
@@ -2362,7 +2614,7 @@ class Psd(Instrument):
                     ) + np.timedelta64(
                         int(data['time'].values[i]), 's')
                     for i in range(len(data['time']))
-                ], dtype='datetime64[s]')
+                ], dtype='datetime64[ns]')
                 bin_min = data['CONCENTRATION'].attrs['bin_endpoints'][:-1] / 1000.
                 bin_max = data['CONCENTRATION'].attrs['bin_endpoints'][1:] / 1000.
                 bin_width = (bin_max - bin_min) / 10. # (cm)
@@ -2895,18 +3147,29 @@ class Psd(Instrument):
                 mass_particle ** 2 * self.data['count'] / self.data['sv']
             ).sum(dim='size') # simulated Z (mm^6 m^-3)
             iwc_bf_temp = 10. ** 6 * (mass_bf / self.data['sv']).sum(dim='size') # IWC (g m-3)
-            dmm_bf_temp = xr.full_like(nt_temp, np.nan) # allocate array of nan
-            dmm_bf_temp[~np.isnan(mass_rel_bf[-1,:])] = self.data['bin_center'][
-            	(0.5 - mass_rel_bf[:, ~np.isnan(mass_rel_bf[-1,:])]).argmin(dim='size')] # med mass D (mm)
+            # dmm_bf_temp = xr.full_like(nt_temp, np.nan) # allocate array of nan
+            # dmm_bf_temp[~np.isnan(mass_rel_bf[-1,:])] = self.data['bin_center'][
+            # 	(0.5 - mass_rel_bf[:, ~np.isnan(mass_rel_bf[-1,:])]).argmin(dim='size')] # med mass D (mm)
             dm_bf_temp = 10. * (
                 (self.data['bin_center'] / 10.) * mass_bf /
                 self.data['sv']).sum(dim='size') / (
                 mass_bf / self.data['sv']
             ).sum(dim='size') # mass-weighted mean D from Chase et al. (2020) (mm)
-            dmelt_bf_temp = ((6. * mass_particle) / (np.pi * 0.997)) ** (1. / 3.)
-            nw_bf_temp = np.log10((1e5) * (4.**4 / 6) * (
-                dmelt_bf_temp**3 * self.data.ND * self.data.bin_width).sum(dim='size') ** 5 / (
-                dmelt_bf_temp**4 * self.data.ND * self.data.bin_width).sum(dim='size') ** 4)
+            msstd_bf_temp = np.sqrt(
+                (10.**6) * (
+                    mass_bf / self.data['sv'] * (self.data['bin_center'] - dm_bf_temp)**2
+                ).sum(dim='size') / iwc_bf_temp
+            ) # width of the PSD mass spectrum (Borque et al. 2019 Eqn 6)
+            dmelt_bf_temp = ((6. * mass_particle) / (np.pi * 0.997)) ** (1. / 3.) # (cm)
+            nw_bf_temp = np.log10(
+                (1e5) * (4.**4 / 6)
+                * ((dmelt_bf_temp**3 * self.data.ND * self.data.bin_width).sum(dim='size') ** 5)
+                / ((dmelt_bf_temp**4 * self.data.ND * self.data.bin_width).sum(dim='size') ** 4)
+            )
+            dml_bf_temp = 10. * (
+                (dmelt_bf_temp * mass_bf /  self.data['sv']).sum(dim='size')
+                / (mass_bf / self.data['sv']).sum(dim='size')
+            ) # liquid-equivalent Dm from Chase et al. (2022) (mm)
             ar_bf_temp = (
                 self.data['area_ratio'] * mass_bf / self.data['sv']).sum(dim='size') / (
                 mass_bf / self.data['sv']
@@ -2946,18 +3209,29 @@ class Psd(Instrument):
                 mass_particle ** 2 * self.data['count'] / self.data['sv']
             ).sum(dim='size') # simulated Z (mm^6 m^-3)
             iwc_hy_temp = 10. ** 6 * (mass_hy / self.data['sv']).sum(dim='size') # IWC (g m-3)
-            dmm_hy_temp = xr.full_like(nt_temp, np.nan) # allocate array of nan
-            dmm_hy_temp[~np.isnan(mass_rel_hy[-1,:])] = self.data['bin_center'][
-            	(0.5 - mass_rel_hy[:, ~np.isnan(mass_rel_hy[-1,:])]).argmin(dim='size')] # med mass D (mm)
+            # dmm_hy_temp = xr.full_like(nt_temp, np.nan) # allocate array of nan
+            # dmm_hy_temp[~np.isnan(mass_rel_hy[-1,:])] = self.data['bin_center'][
+            # 	(0.5 - mass_rel_hy[:, ~np.isnan(mass_rel_hy[-1,:])]).argmin(dim='size')] # med mass D (mm)
             dm_hy_temp = 10. * (
                 (self.data['bin_center'] / 10.) * mass_hy /
                 self.data['sv']).sum(dim='size') / (
                 mass_hy / self.data['sv']
             ).sum(dim='size') # mass-weighted mean D from Chase et al. (2020) (mm)
+            msstd_hy_temp = np.sqrt(
+                (10.**6) * (
+                    mass_hy / self.data['sv'] * (self.data['bin_center'] - dm_hy_temp)**2
+                ).sum(dim='size') / iwc_hy_temp
+            ) # width of the PSD mass spectrum (Borque et al. 2019 Eqn 6)
             dmelt_hy_temp = ((6. * mass_particle) / (np.pi * 0.997)) ** (1. / 3.)
-            nw_hy_temp = np.log10((1e5) * (4.**4 / 6) * (
-                dmelt_hy_temp**3 * self.data.ND * self.data.bin_width).sum(dim='size') ** 5 / (
-                dmelt_hy_temp**4 * self.data.ND * self.data.bin_width).sum(dim='size') ** 4)
+            nw_hy_temp = np.log10(
+                (1e5) * (4.**4 / 6)
+                * ((dmelt_hy_temp**3 * self.data.ND * self.data.bin_width).sum(dim='size') ** 5)
+                / ((dmelt_hy_temp**4 * self.data.ND * self.data.bin_width).sum(dim='size') ** 4)
+            )
+            dml_hy_temp = 10. * (
+                (dmelt_hy_temp * mass_hy /  self.data['sv']).sum(dim='size')
+                / (mass_hy / self.data['sv']).sum(dim='size')
+            ) # liquid-equivalent Dm from Chase et al. (2022) (mm)
             ar_hy_temp = (
                 self.data['area_ratio'] * mass_hy / self.data['sv']).sum(dim='size') / (
                 mass_hy / self.data['sv']
@@ -2984,6 +3258,67 @@ class Psd(Instrument):
                         N0_hy_temp[i] = sol.x[0]
                         mu_hy_temp[i] = sol.x[1]
                         lam_hy_temp[i] = sol.x[2]
+                        
+            ## ===== Chase et al. (2021; doi: 10.1175/JAMC-D-20-0177.1) m-D products =====
+            mass_particle = 0.003493 * (
+                self.data['bin_center'] / 10.
+            ) ** 2.04 # particle mass (g) - from a-value in SI units = 0.042 kg m**-2.04
+            mass_ch = mass_particle * self.data['count'] # binned mass (g)
+            mass_rel_ch = mass_ch.cumsum(
+                dim='size') / mass_ch.cumsum(dim='size')[-1, :] # binned mass fraction
+            z_ch_temp = 1.e12 * (0.174 / 0.93) * (6. / np.pi / 0.934) ** 2 * (
+                mass_particle ** 2 * self.data['count'] / self.data['sv']
+            ).sum(dim='size') # simulated Z (mm^6 m^-3)
+            iwc_ch_temp = 10. ** 6 * (mass_ch / self.data['sv']).sum(dim='size') # IWC (g m-3)
+            # dmm_ch_temp = xr.full_like(nt_temp, np.nan) # allocate array of nan
+            # dmm_ch_temp[~np.isnan(mass_rel_ch[-1,:])] = self.data['bin_center'][
+            # 	(0.5 - mass_rel_ch[:, ~np.isnan(mass_rel_ch[-1,:])]).argmin(dim='size')] # med mass D (mm)
+            dm_ch_temp = 10. * (
+                (self.data['bin_center'] / 10.) * mass_ch /
+                self.data['sv']).sum(dim='size') / (
+                mass_ch / self.data['sv']
+            ).sum(dim='size') # mass-weighted mean D from Chase et al. (2020) (mm)
+            msstd_ch_temp = np.sqrt(
+                (10.**6) * (
+                    mass_ch / self.data['sv'] * (self.data['bin_center'] - dm_ch_temp)**2
+                ).sum(dim='size') / iwc_ch_temp
+            ) # width of the PSD mass spectrum (Borque et al. 2019 Eqn 6)
+            dmelt_ch_temp = ((6. * mass_particle) / (np.pi * 0.997)) ** (1. / 3.)
+            nw_ch_temp = np.log10(
+                (1e5) * (4.**4 / 6)
+                * ((dmelt_ch_temp**3 * self.data.ND * self.data.bin_width).sum(dim='size') ** 5)
+                / ((dmelt_ch_temp**4 * self.data.ND * self.data.bin_width).sum(dim='size') ** 4)
+            )
+            dml_ch_temp = 10. * (
+                (dmelt_ch_temp * mass_ch /  self.data['sv']).sum(dim='size')
+                / (mass_ch / self.data['sv']).sum(dim='size')
+            ) # liquid-equivalent Dm from Chase et al. (2022) (mm)
+            ar_ch_temp = (
+                self.data['area_ratio'] * mass_ch / self.data['sv']).sum(dim='size') / (
+                mass_ch / self.data['sv']
+            ).sum(dim='size') # mass-weighted mean area ratio
+            asr_ch_temp = (
+                self.data['aspect_ratio'] * mass_ch / self.data['sv']).sum(dim='size') / (
+                mass_ch / self.data['sv']
+            ).sum(dim='size') # mass-weighted mean aspect ratio
+            rhoe_ch_temp = (iwc_ch_temp / 10. ** 6) / vol # eff density from Chase et al. (2018) (g cm**-3)
+            
+            # optionally compute gamma fit params for each observation
+            if calc_gamma_params:
+                N0_ch_temp = -999. * np.ones(len(self.data.time))
+                mu_ch_temp = -999. * np.ones(len(self.data.time))
+                lam_ch_temp = -999. * np.ones(len(self.data.time))
+                for i in range(len(self.data.time)):
+                    if iwc_ch_temp[i] > 0: # only compute when there's a PSD
+                        sol = least_squares(
+                            self.calc_chisquare, x0, method='lm', ftol=1e-9, xtol=1e-9, max_nfev=int(1e6),
+                            args=(
+                                nt_temp[i], iwc_ch_temp[i], z_ch_temp[i], 0.003493, 2.04
+                            )
+                        ) # solve the gamma params using least squares minimziation
+                        N0_ch_temp[i] = sol.x[0]
+                        mu_ch_temp[i] = sol.x[1]
+                        lam_ch_temp[i] = sol.x[2]
                         
             ## ===== Leinonen and Szyrmer (2015) m-D products =====
             compute_ls = False # bool for calculating optional LS products
@@ -3099,18 +3434,27 @@ class Psd(Instrument):
                     mass_particle ** 2 * self.data['count'] / self.data['sv']
                 ).sum(dim='size') # simulated Z (mm^6 m^-3)
                 iwc_ls_temp = 10. ** 6 * (mass_ls / self.data['sv']).sum(dim='size') # IWC (g m-3)
-                dmm_ls_temp = xr.full_like(nt_temp, np.nan) # allocate array of nan
-                dmm_ls_temp[~np.isnan(mass_rel_ls[-1,:])] = self.data['bin_center'][
-                    (0.5 - mass_rel_ls[:, ~np.isnan(mass_rel_ls[-1,:])]).argmin(dim='size')] # med mass D (mm)
+                # dmm_ls_temp = xr.full_like(nt_temp, np.nan) # allocate array of nan
+                # dmm_ls_temp[~np.isnan(mass_rel_ls[-1,:])] = self.data['bin_center'][
+                #     (0.5 - mass_rel_ls[:, ~np.isnan(mass_rel_ls[-1,:])]).argmin(dim='size')] # med mass D (mm)
                 dm_ls_temp = 10. * (
                     (self.data['bin_center'] / 10.) * mass_ls /
                     self.data['sv']).sum(dim='size') / (
                     mass_ls / self.data['sv']
                 ).sum(dim='size') # mass-weighted mean D from Chase et al. (2020) (mm)
+                msstd_ls_temp = np.sqrt(
+                    (10.**6) * (
+                        mass_ls / self.data['sv'] * (self.data['bin_center'] - dm_ls_temp)**2
+                    ).sum(dim='size') / iwc_ls_temp
+                ) # width of the PSD mass spectrum (Borque et al. 2019 Eqn 6)
                 dmelt_ls_temp = ((6. * mass_particle) / (np.pi * 0.997)) ** (1. / 3.)
                 nw_ls_temp = np.log10((1e5) * (4.**4 / 6) * (
                         dmelt_ls_temp**3 * self.data.ND * self.data.bin_width).sum(dim='size') ** 5 / (
                         dmelt_ls_temp**4 * self.data.ND * self.data.bin_width).sum(dim='size') ** 4)
+                dml_ls_temp = 10. * (
+                    (dmelt_ls_temp * mass_ls /  self.data['sv']).sum(dim='size')
+                    / (mass_ls / self.data['sv']).sum(dim='size')
+            	) # liquid-equivalent Dm from Chase et al. (2022) (mm)
                 ar_ls_temp = (
                     self.data['area_ratio'] * mass_ls / self.data['sv']).sum(dim='size') / (
                     mass_ls / self.data['sv']
@@ -3142,22 +3486,29 @@ class Psd(Instrument):
         if calc_gamma_params:
             N0_bf_temp = np.ma.masked_where(N0_bf_temp == -999., N0_bf_temp)
             N0_hy_temp = np.ma.masked_where(N0_hy_temp == -999., N0_hy_temp)
-            N0_ls_temp = np.ma.masked_where(N0_ls_temp == -999., N0_ls_temp)
+            N0_ch_temp = np.ma.masked_where(N0_hy_temp == -999., N0_ch_temp)
             mu_bf_temp = np.ma.masked_where(mu_bf_temp == -999., mu_bf_temp)
             mu_hy_temp = np.ma.masked_where(mu_hy_temp == -999., mu_hy_temp)
-            mu_ls_temp = np.ma.masked_where(mu_hy_temp == -999., mu_ls_temp)
+            mu_ch_temp = np.ma.masked_where(mu_hy_temp == -999., mu_ch_temp)
             lam_bf_temp = np.ma.masked_where(lam_bf_temp == -999., lam_bf_temp)
             lam_hy_temp = np.ma.masked_where(lam_hy_temp == -999., lam_hy_temp)
-            lam_ls_temp = np.ma.masked_where(lam_hy_temp == -999., lam_ls_temp)
+            lam_ch_temp = np.ma.masked_where(lam_hy_temp == -999., lam_ch_temp)
+            if compute_ls:
+                N0_ls_temp = np.ma.masked_where(N0_ls_temp == -999., N0_ls_temp)
+                mu_ls_temp = np.ma.masked_where(mu_hy_temp == -999., mu_ls_temp)
+                lam_ls_temp = np.ma.masked_where(lam_hy_temp == -999., lam_ls_temp)
         else:
             N0_bf_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
             N0_hy_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
+            N0_ch_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
             N0_ls_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
             mu_bf_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
             mu_hy_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
+            mu_ch_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
             mu_ls_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
             lam_bf_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
             lam_hy_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
+            lam_ch_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
             lam_ls_temp = np.ma.array(np.zeros(len(self.data.time)), mask=True)
             
         # add bulk properties to PSD object
@@ -3239,15 +3590,33 @@ class Psd(Instrument):
                 relationship='m = 0.00196 * D ** 1.9',
                 units = 'mm')
         )
-        dmm_bf = xr.DataArray(
-            data = dmm_bf_temp,
+        dml_bf = xr.DataArray(
+            data = dml_bf_temp,
             dims = 'time',
             coords = dict(time=self.data.time),
             attrs = dict(
-                description='Median mass diameter [Brown and Francis (1995) m-D relationship]',
+                description='Liquid-equivalent mass-weighted mean diameter [Brown and Francis (1995) m-D relationship]',
                 relationship='m = 0.00196 * D ** 1.9',
                 units = 'mm')
         )
+        msstd_bf = xr.DataArray(
+            data = msstd_bf_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Mass spectrum standard deviation [Brown and Francis (1995) m-D relationship]',
+                relationship='m = 0.00196 * D ** 1.9',
+                units = 'mm')
+        )
+        # dmm_bf = xr.DataArray(
+        #     data = dmm_bf_temp,
+        #     dims = 'time',
+        #     coords = dict(time=self.data.time),
+        #     attrs = dict(
+        #         description='Median mass diameter [Brown and Francis (1995) m-D relationship]',
+        #         relationship='m = 0.00196 * D ** 1.9',
+        #         units = 'mm')
+        # )
         ar_bf = xr.DataArray(
             data = ar_bf_temp,
             dims = 'time',
@@ -3329,15 +3698,33 @@ class Psd(Instrument):
                 relationship='m = 0.00528 * D ** 2.1',
                 units = 'mm')
         )
-        dmm_hy = xr.DataArray(
-            data = dmm_hy_temp,
+        dml_hy = xr.DataArray(
+            data = dml_hy_temp,
             dims = 'time',
             coords = dict(time=self.data.time),
             attrs = dict(
-                description='Median mass diameter [Heymsfield et al. (2010) m-D relationship]',
+                description='Liquid-equivalent mass-weighted mean diameter [Heymsfield et al. (2010) m-D relationship]',
                 relationship='m = 0.00528 * D ** 2.1',
                 units = 'mm')
         )
+        msstd_hy = xr.DataArray(
+            data = msstd_hy_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Mass spectrum standard deviation [Heymsfield et al. (2010) m-D relationship]',
+                relationship='m = 0.00528 * D ** 2.1',
+                units = 'mm')
+        )
+        # dmm_hy = xr.DataArray(
+        #     data = dmm_hy_temp,
+        #     dims = 'time',
+        #     coords = dict(time=self.data.time),
+        #     attrs = dict(
+        #         description='Median mass diameter [Heymsfield et al. (2010) m-D relationship]',
+        #         relationship='m = 0.00528 * D ** 2.1',
+        #         units = 'mm')
+        # )
         ar_hy = xr.DataArray(
             data = ar_hy_temp,
             dims = 'time',
@@ -3363,6 +3750,105 @@ class Psd(Instrument):
             attrs = dict(
                 description='Effective density [Heymsfield et al. (2010) m-D relationship]',
                 relationship='m = 0.00528 * D ** 2.1',
+                units = 'g cm-3')
+        )
+        nw_ch = xr.DataArray(
+            data = nw_ch_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Normalized PSD intercept parameter [Chase et al. (2021) m-D relationship]',
+                relationship='m = 0.003493 * D ** 2.04',
+                units = 'log10(m**-3 mm**-1)')
+        )
+        N0_ch = xr.DataArray(
+            data = N0_ch_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='PSD intercept parameter [Chase et al. (2021) m-D relationship]',
+                relationship='m = 0.003493 * D ** 2.04',
+                units = 'cm-4')
+        )
+        mu_ch = xr.DataArray(
+            data = mu_ch_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='PSD shape parameter [Chase et al. (2021) m-D relationship]',
+                relationship='m = 0.003493 * D ** 2.04',
+                units = '#')
+        )
+        lam_ch = xr.DataArray(
+            data = lam_ch_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='PSD slope parameter [Chase et al. (2021) m-D relationship]',
+                relationship='m = 0.003493 * D ** 2.04',
+                units = 'cm-1')
+        )
+        iwc_ch = xr.DataArray(
+            data = iwc_ch_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Ice water content [Chase et al. (2021) m-D relationship]',
+                relationship='m = 0.003493 * D ** 2.04',
+                units = 'g m-3')
+        )
+        dm_ch = xr.DataArray(
+            data = dm_ch_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Mass-weighted mean diameter [Chase et al. (2021) m-D relationship]',
+                relationship='m = 0.003493 * D ** 2.04',
+                units = 'mm')
+        )
+        dml_ch = xr.DataArray(
+            data = dml_ch_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Liquid-equivalent mass-weighted mean diameter [Chase et al. (2021) m-D relationship]',
+                relationship='m = 0.003493 * D ** 2.04',
+                units = 'mm')
+        )
+        msstd_ch = xr.DataArray(
+            data = msstd_ch_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Mass spectrum standard deviation [Chase et al. (2021) m-D relationship]',
+                relationship='m = 0.003493 * D ** 2.04',
+                units = 'mm')
+        )
+        ar_ch = xr.DataArray(
+            data = ar_ch_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Mass-weighted mean area ratio [Chase et al. (2021) m-D relationship]',
+                relationship='m = 0.003493 * D ** 2.04',
+                units = '#')
+        )
+        asr_ch = xr.DataArray(
+            data = asr_ch_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Mass-weighted mean aspect ratio [Chase et al. (2021) m-D relationship]',
+                relationship='m = 0.003493 * D ** 2.04',
+                units = '#')
+        )
+        rhoe_ch = xr.DataArray(
+            data = rhoe_ch_temp,
+            dims = 'time',
+            coords = dict(time=self.data.time),
+            attrs = dict(
+                description='Effective density [Chase et al. (2021) m-D relationship]',
+                relationship='m = 0.003493 * D ** 2.04',
                 units = 'g cm-3')
         )
         if compute_ls: # additional LS15 products
@@ -3414,14 +3900,30 @@ class Psd(Instrument):
                     description='Mass-weighted mean diameter [Leinonen and Szyrmer (2015) m-D relationships]',
                     units = 'mm')
             ).where(np.sum(dbz_error, axis=0) > 0.)
-            dmm_ls = xr.DataArray(
-                data = dmm_ls_temp,
+            dml_ls = xr.DataArray(
+            	data = dml_ls_temp,
+            	dims = 'time',
+            	coords = dict(time=self.data.time),
+            	attrs = dict(
+                	description='Liquid-equivalent mass-weighted mean diameter [Leinonen and Szyrmer (2015) m-D relationships]',
+                	units = 'mm')
+        	).where(np.sum(dbz_error, axis=0) > 0.)
+            msstd_ls = xr.DataArray(
+                data = msstd_ls_temp,
                 dims = 'time',
                 coords = dict(time=self.data.time),
                 attrs = dict(
-                    description='Median mass diameter [Leinonen and Szyrmer (2015) m-D relationships]',
+                    description='Mass spectrum standard deviation [Leinonen and Szyrmer (2015) m-D relationships]',
                     units = 'mm')
             ).where(np.sum(dbz_error, axis=0) > 0.)
+            # dmm_ls = xr.DataArray(
+            #     data = dmm_ls_temp,
+            #     dims = 'time',
+            #     coords = dict(time=self.data.time),
+            #     attrs = dict(
+            #         description='Median mass diameter [Leinonen and Szyrmer (2015) m-D relationships]',
+            #         units = 'mm')
+            # ).where(np.sum(dbz_error, axis=0) > 0.)
             ar_ls = xr.DataArray(
                 data = ar_ls_temp,
                 dims = 'time',
@@ -3451,27 +3953,38 @@ class Psd(Instrument):
                 'n': n,
                 'am': am.where(np.sum(dbz_error, axis=0) > 0.),
                 'bm': bm.where(np.sum(dbz_error, axis=0) > 0.),
-                'nw_bf': nw_bf, 'nw_hy': nw_hy, 'nw_ls': nw_ls,
-                'N0_bf': N0_bf, 'N0_hy': N0_hy, 'N0_ls': N0_ls,
-                'mu_bf': mu_bf, 'mu_hy': mu_hy, 'mu_ls': mu_ls,
-                'lambda_bf': lam_bf, 'lambda_hy': lam_hy, 'lambda_ls': lam_ls,
-                'iwc_bf': iwc_bf, 'iwc_hy': iwc_hy, 'iwc_ls': iwc_ls,
-                'dm_bf': dm_bf, 'dm_hy': dm_hy, 'dm_ls': dm_ls,
-                'dmm_bf': dmm_bf, 'dmm_hy': dmm_hy, 'dmm_ls': dmm_ls,
-                'rhoe_bf': rhoe_bf, 'rhoe_hy': rhoe_hy, 'rhoe_ls': rhoe_ls,
-                'area_ratio_mean_n': ar_nw, 'area_ratio_mean_bf': ar_bf,
-                'area_ratio_mean_hy': ar_hy, 'area_ratio_mean_ls': ar_ls,
-                'aspect_ratio_mean_n': asr_nw, 'aspect_ratio_mean_bf': asr_bf,
-                'aspect_ratio_mean_hy': asr_hy, 'aspect_ratio_mean_ls': asr_ls
+                'nw_bf': nw_bf, 'nw_hy': nw_hy, 'nw_ch': nw_ch, 'nw_ls': nw_ls,
+                'N0_bf': N0_bf, 'N0_hy': N0_hy, 'N0_ch': N0_ch, 'N0_ls': N0_ls,
+                'mu_bf': mu_bf, 'mu_hy': mu_hy, 'mu_ch': mu_ch, 'mu_ls': mu_ls,
+                'lambda_bf': lam_bf, 'lambda_hy': lam_hy, 'lambda_ch': lam_ch, 'lambda_ls': lam_ls,
+                'iwc_bf': iwc_bf, 'iwc_hy': iwc_hy, 'iwc_ch': iwc_ch, 'iwc_ls': iwc_ls,
+                'dm_bf': dm_bf, 'dm_hy': dm_hy, 'dm_ch': dm_ch, 'dm_ls': dm_ls,
+                'dm_liq_bf': dml_bf, 'dm_liq_hy': dml_hy, 'dm_liq_ch': dml_ch, 'dm_liq_ls': dml_ls,
+                'mD_std_bf': msstd_bf, 'mD_std_hy': msstd_hy, 'mD_std_ch': msstd_ch, 'mD_std_ls': msstd_ls,
+                #'dmm_bf': dmm_bf, 'dmm_hy': dmm_hy, 'dmm_ls': dmm_ls,
+                'rhoe_bf': rhoe_bf, 'rhoe_hy': rhoe_hy, 'rhoe_ch': rhoe_ch, 'rhoe_ls': rhoe_ls,
+                'area_ratio_mean_n': ar_nw, 'area_ratio_mean_bf': ar_bf, 'area_ratio_mean_hy': ar_hy,
+                'area_ratio_mean_ch': ar_ch, 'area_ratio_mean_ls': ar_ls,
+                'aspect_ratio_mean_n': asr_nw, 'aspect_ratio_mean_bf': asr_bf, 'aspect_ratio_mean_hy': asr_hy,
+                'aspect_ratio_mean_ch': asr_ch, 'aspect_ratio_mean_ls': asr_ls
             }
         else:
             data_vars = {
-                'n': n, 'N0_bf': N0_bf, 'N0_hy': N0_hy, 'mu_bf': mu_bf, 'mu_hy': mu_hy,
-                'lambda_bf': lam_bf, 'lambda_hy': lam_hy, 'iwc_bf': iwc_bf, 'iwc_hy': iwc_hy,
-                'dm_bf': dm_bf, 'dm_hy': dm_hy, 'dmm_bf': dmm_bf, 'dmm_hy': dmm_hy,
-                'rhoe_bf': rhoe_bf, 'rhoe_hy': rhoe_hy,
-                'area_ratio_mean_n': ar_nw, 'area_ratio_mean_bf': ar_bf, 'area_ratio_mean_hy': ar_hy,
-                'aspect_ratio_mean_n': asr_nw, 'aspect_ratio_mean_bf': asr_bf, 'aspect_ratio_mean_hy': asr_hy
+                'n': n,
+                'nw_bf': nw_bf, 'nw_hy': nw_hy, 'nw_ch': nw_ch,
+                'N0_bf': N0_bf, 'N0_hy': N0_hy, 'N0_ch': N0_ch,
+                'mu_bf': mu_bf, 'mu_hy': mu_hy, 'mu_ch': mu_ch,
+                'lambda_bf': lam_bf, 'lambda_hy': lam_hy, 'lambda_ch': lam_ch,
+                'iwc_bf': iwc_bf, 'iwc_hy': iwc_hy, 'iwc_ch': iwc_ch,
+                'dm_bf': dm_bf, 'dm_hy': dm_hy, 'dm_ch': dm_ch,
+                'dm_liq_bf': dml_bf, 'dm_liq_hy': dml_hy, 'dm_liq_ch': dml_ch,
+                'mD_std_bf': msstd_bf, 'mD_std_hy': msstd_hy, 'mD_std_ch': msstd_ch,
+                #'dmm_bf': dmm_bf, 'dmm_hy': dmm_hy,
+                'rhoe_bf': rhoe_bf, 'rhoe_hy': rhoe_hy, 'rhoe_ch': rhoe_ch,
+                'area_ratio_mean_n': ar_nw, 'area_ratio_mean_bf': ar_bf,
+                'area_ratio_mean_hy': ar_hy, 'area_ratio_mean_ch': ar_ch,
+                'aspect_ratio_mean_n': asr_nw, 'aspect_ratio_mean_bf': asr_bf,
+                'aspect_ratio_mean_hy': asr_hy, 'aspect_ratio_mean_ch': asr_ch
             }
         
         # put bulk properties together into an XArray DataSet
@@ -3486,12 +3999,15 @@ class Psd(Instrument):
                 ds = ds.drop_vars(
                     [
                         'N0_bf', 'mu_bf', 'lambda_bf', 'N0_hy', 'mu_hy', 'lambda_hy',
-                        'N0_ls', 'mu_ls', 'lambda_ls'
+                        'N0_ch', 'mu_ch', 'lambda_ch', 'N0_ls', 'mu_ls', 'lambda_ls'
                     ]
                 )
             else:
                 ds = ds.drop_vars(
-                    ['N0_bf', 'mu_bf', 'lambda_bf', 'N0_hy', 'mu_hy', 'lambda_hy']
+                    [
+                        'N0_bf', 'mu_bf', 'lambda_bf', 'N0_hy', 'mu_hy', 'lambda_hy',
+                        'N0_ch', 'mu_ch', 'lambda_ch'
+                    ]
                 )
         if 'habit' in list(self.data.dims):
             ds_merged = xr.merge(
@@ -3568,7 +4084,7 @@ class Psd(Instrument):
 
         Returns
         -------
-        dt          : np.array(dtype='datetime64[s]')
+        dt          : np.array(dtype='datetime64[ns]')
           A datetime object which corresponds to the given value `time_hhmmss`.
         """
         year = np.tile(int(date[:4]), (len(time_hhmmss)))
@@ -3591,6 +4107,6 @@ class Psd(Instrument):
                 'second': second
             }
         )
-        dt = pd.to_datetime(df).to_numpy().astype('datetime64[s]')
+        dt = pd.to_datetime(df).to_numpy().astype('datetime64[ns]')
 
         return dt

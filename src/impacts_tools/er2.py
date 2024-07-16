@@ -349,7 +349,7 @@ class Lidar(ABC):
         # return nan for pixels not residing within layers
         return data_array.where(mask == 0)
     
-    def trim_time_bounds(self, start_time=None, end_time=None, tres='1S'):
+    def trim_time_bounds(self, start_time=None, end_time=None):
         """
         Put the dataset into the specified time bounds.
         
@@ -368,18 +368,22 @@ class Lidar(ABC):
         if (start_time is not None) or (end_time is not None):      
             # compute dataset timedelta
             td_ds = pd.to_timedelta(
-                self.data['time'][1].values - self.data['time'][0].values
-            )
+                self.data['time'][1:].values - self.data['time'][:-1].values
+            ).median() # representative td in case of outlier times during flight
             
             # format start and end times
             if start_time is None:
                 start_time = self.data['time'][0].values
+            elif isinstance(start_time, str):
+            	start_time = np.datetime64(start_time)
                 
             if end_time is None:
                 end_time = self.data['time'][-1].values
+            elif isinstance(end_time, str):
+            	end_time = np.datetime64(end_time)
 
             # generate trimmed dataset based on time bounds
-            if pd.Timedelta(tres) != pd.Timedelta(1, 's'):
+            if td_ds > pd.Timedelta(1, 's'):
                 end_time -= td_ds
             ds_sub = self.data.sel(time=slice(start_time, end_time))
             
@@ -464,6 +468,9 @@ class Lidar(ABC):
             if self.data[var].ndim == 2:
                 if 'atb' in var:
                     description = f'Cloud top attenuated backscatter at {var.split("_")[-1]} nm'
+                    units = 'km**-1 sr**-1'
+                elif 'pbsc' in var:
+                    description = f'Cloud top particulate backscatter at {var.split("_")[-1]} nm'
                     units = 'km**-1 sr**-1'
                 elif var == 'dpol_1064':
                     description = 'Cloud top depolarization ratio at 1064 nm'
@@ -662,7 +669,7 @@ class Crs(Radar):
         # Time information -- this is the first dimension in nav coords and products
         time_raw = hdf['Time']['Data']['TimeUTC'][:]
         time_dt = [datetime(1970, 1, 1) + timedelta(seconds=time_raw[i]) for i in range(len(time_raw))] # Python datetime object
-        time_dt64 = np.array(time_dt, dtype='datetime64[ms]') # Numpy datetime64 object (e.g., for plotting)
+        time_dt64 = np.array(time_dt, dtype='datetime64[ns]') # Numpy datetime64 object (e.g., for plotting)
 
         if start_time is not None:
             time_inds = np.where((time_dt64>=start_time) & (time_dt64<=end_time))[0]
@@ -1348,7 +1355,7 @@ class Hiwrap(Radar):
         # Time information -- this is the first dimension in nav coords and products
         time_raw = hdf['Time']['Data']['TimeUTC'][:]
         time_dt = [datetime(1970, 1, 1) + timedelta(seconds=time_raw[i]) for i in range(len(time_raw))] # Python datetime object
-        time_dt64 = np.array(time_dt, dtype='datetime64[ms]') # Numpy datetime64 object (e.g., for plotting)
+        time_dt64 = np.array(time_dt, dtype='datetime64[ns]') # Numpy datetime64 object (e.g., for plotting)
 
         if start_time is not None:
             time_inds = np.where((time_dt64>=start_time) & (time_dt64<=end_time))[0]
@@ -1363,7 +1370,7 @@ class Hiwrap(Radar):
                 for i in range(len(time2_raw))
             ] # Python datetime object
             time2_dt64 = np.array(
-                time2_dt, dtype='datetime64[ms]'
+                time2_dt, dtype='datetime64[ns]'
             ) # Numpy datetime64 object (e.g., for plotting)
             ka_inds = np.isin(time2_dt64, time_dt64) # find HIWRAP Ka-band time indices common to Ku-band
 
@@ -1714,7 +1721,13 @@ class Hiwrap(Radar):
             # for NUBF correction
             if dataset=='2020': # for files with combined Ku- and Ka-band data
                 data_var = hdf['Products']['Ka']['Combined']['Data']['Velocity_corrected'][:].T
-                description_var = hdf['Products']['Ka']['Combined']['Information']['Velocity_corrected_description'][0].decode('UTF-8')
+                try:
+                    description_var = hdf['Products']['Ka']['Combined']['Information']['Velocity_corrected_description'][0].decode('UTF-8')
+                except KeyError: # found missing var in 7 Feb 2020 file
+                    description_var = (
+                        'Doppler velocity corrected to account for intrusion of '
+                        'horizontal reanalysis winds and angle offset between Ku and Ka antennas'
+                    )
                 units_var = hdf['Products']['Ka']['Combined']['Information']['Velocity_corrected_units'][0].decode('UTF-8')
             else:
                 data_var = hdf2['Products']['Combined']['Data']['Velocity_corrected'][ka_inds, :].T
@@ -1764,7 +1777,13 @@ class Hiwrap(Radar):
             # for NUBF correction
             if dataset=='2020': # for files with combined Ku- and Ka-band data
                 data_var = hdf['Products']['Ku']['Combined']['Data']['Velocity_corrected'][:].T
-                description_var = hdf['Products']['Ku']['Combined']['Information']['Velocity_corrected_description'][0].decode('UTF-8')
+                try:
+                    description_var = hdf['Products']['Ku']['Combined']['Information']['Velocity_corrected_description'][0].decode('UTF-8')
+                except KeyError: # found missing var in 7 Feb 2020 file
+                    description_var = (
+                        'Doppler velocity corrected to account for intrusion of '
+                        'horizontal reanalysis winds and angle offset between Ku and Ka antennas'
+                    )
                 units_var = hdf['Products']['Ku']['Combined']['Information']['Velocity_corrected_units'][0].decode('UTF-8')
             else:
                 data_var = hdf['Products']['Combined']['Data']['Velocity_corrected'][:].T
@@ -1910,7 +1929,13 @@ class Hiwrap(Radar):
         
         if dataset=='2020': # for files with combined Ku- and Ka-band data
             data_var = hdf['Products']['Ka']['Combined']['Information']['Velocity_horizwind_offset'][:].T
-            description_var = hdf['Products']['Ka']['Combined']['Information']['Velocity_horizwind_offset_description'][0].decode('UTF-8')
+            try:
+                description_var = hdf['Products']['Ka']['Combined']['Information']['Velocity_horizwind_offset_description'][0].decode('UTF-8')
+            except KeyError: # found missing var in 7 Feb 2020 file
+                description_var = (
+                    'The horizontal wind offset used to correct Doppler velocity '
+                    '[Vel_corr = Vel_uncorr - horizwind_offset + angle_offset. This is applied to all channels.'
+                )
             units_var = hdf['Products']['Ka']['Combined']['Information']['Velocity_horizwind_offset_units'][0].decode('UTF-8')
         else:
             data_var = hdf2['Products']['Combined']['Information']['Velocity_horizwind_offset'][ka_inds, :].T
@@ -1934,7 +1959,13 @@ class Hiwrap(Radar):
         
         if dataset=='2020': # for files with combined Ku- and Ka-band data
             data_var = hdf['Products']['Ku']['Combined']['Information']['Velocity_horizwind_offset'][:].T
-            description_var = hdf['Products']['Ku']['Combined']['Information']['Velocity_horizwind_offset_description'][0].decode('UTF-8')
+            try:
+                description_var = hdf['Products']['Ku']['Combined']['Information']['Velocity_horizwind_offset_description'][0].decode('UTF-8')
+            except KeyError: # found missing var in 7 Feb 2020 file
+                description_var = (
+                    'The horizontal wind offset used to correct Doppler velocity '
+                    '[Vel_corr = Vel_uncorr - horizwind_offset + angle_offset. This is applied to all channels.'
+                )
             units_var = hdf['Products']['Ku']['Combined']['Information']['Velocity_horizwind_offset_units'][0].decode('UTF-8')
         else:
             data_var = hdf['Products']['Combined']['Information']['Velocity_horizwind_offset'][:].T
@@ -2257,7 +2288,7 @@ class Exrad(Radar):
         # Time information -- this is the first dimension in nav coords and products
         time_raw = hdf['Time']['Data']['TimeUTC'][:]
         time_dt = [datetime(1970, 1, 1) + timedelta(seconds=time_raw[i]) for i in range(len(time_raw))] # Python datetime object
-        time_dt64 = np.array(time_dt, dtype='datetime64[ms]') # Numpy datetime64 object (e.g., for plotting)
+        time_dt64 = np.array(time_dt, dtype='datetime64[ns]') # Numpy datetime64 object (e.g., for plotting)
 
         if start_time is not None:
             time_inds = np.where((time_dt64>=start_time) & (time_dt64<=end_time))[0]
@@ -2778,9 +2809,10 @@ class Cpl(Lidar):
                     - lon (time): xarray.DataArray(float) - Longitude (degrees)
 
                 Variables:
+                    - pbsc_[1064, 532, 355] (gate, time) : xarray.DataArray(float) - Particulate backscatter coefficient (km**-1 sr**-1) profile for each record
                     - dpol_1064 (gate, time) : xarray.DataArray(float) - Total depolarization ratio profile at 1064 nm for each record
-                    - ext_[1064, 532, 355] (gate, time) : xarray.DataArray(float) - Extinction coefficient (km**-1) profile at [1064, 532, 355] nm for each record
-                    - cod_[1064, 532, 355] (gate, time) : xarray.DataArray(float) - Integrated cloud optical depth at [1064, 532, 355] nm
+                    - ext_[1064, 532, 355] (gate, time) : xarray.DataArray(float) - Extinction coefficient (km**-1) profile for each record
+                    - cod_[1064, 532, 355] (gate, time) : xarray.DataArray(float) - Integrated cloud optical depth
 
                 Attribute Information:
                     Experiment, Date, Aircraft, Lidar Name, Data Contact, Instrument PI, Mission PI,
@@ -2830,7 +2862,9 @@ class Cpl(Lidar):
             for var in ['atb_1064', 'atb_532', 'atb_355']:
                 self.data[var] = self.qc_profile(self.data[var], l2_qc_ref)
         elif (l2_qc_ref is not None) and (self.name == 'CPL L2 Profiles'):
-            for var in ['ext_1064', 'ext_532', 'ext_355', 'dpol_1064']:
+            for var in [
+                    'pbsc_1064', 'pbsc_532', 'pbsc_355',
+                    'ext_1064', 'ext_532', 'ext_355', 'dpol_1064']:
                 self.data[var] = self.qc_profile(self.data[var], l2_qc_ref)
         
         # mask values when aircraft is rolling
@@ -2870,7 +2904,7 @@ class Cpl(Lidar):
             [date + timedelta(
                 days=int(hdf['Dec_JDay'][i]) - 1, hours=int(hdf['Hour'][i]),
                 minutes=int(hdf['Minute'][i]), seconds=int(hdf['Second'][i])
-            ) for i in range(hdf['Hour'].shape[0])], dtype='datetime64[ms]'
+            ) for i in range(hdf['Hour'].shape[0])], dtype='datetime64[ns]'
         )
         
         # aircraft nav information
@@ -3070,7 +3104,7 @@ class Cpl(Lidar):
         dt = np.array(
             [date + timedelta(
                 seconds=int((86400. * (jday[i, 1] - 1)).round())
-            ) for i in range(jday.shape[0])], dtype='datetime64[ms]'
+            ) for i in range(jday.shape[0])], dtype='datetime64[ns]'
         )
         dt, tind, tinv = np.unique(
             dt, return_index=True, return_inverse=True
@@ -3084,7 +3118,7 @@ class Cpl(Lidar):
             data=np.array(
                 [date + timedelta(
                     seconds=int((86400. * (jday[i, 0] - 1)).round())
-                ) for i in tind], dtype='datetime64[ms]'
+                ) for i in tind], dtype='datetime64[ns]'
             ),
             dims = ['time'],
             attrs = dict(
@@ -3095,7 +3129,7 @@ class Cpl(Lidar):
             data=np.array(
                 [date + timedelta(
                     seconds=int((86400. * (jday[i, 2] - 1)).round())
-                ) for i in tind], dtype='datetime64[ms]'
+                ) for i in tind], dtype='datetime64[ns]'
             ),
             dims = ['time'],
             attrs = dict(
@@ -3137,6 +3171,102 @@ class Cpl(Lidar):
             attrs = dict(
                 description='Height of each lidar range gate',
                 units='m'
+            )
+        )
+        pbsc1064 = xr.DataArray(
+            data = np.ma.masked_where(
+                hdf['profile']['Particulate_Backscatter_Coefficient_1064'][:, tind] <= 0.,
+                hdf['profile']['Particulate_Backscatter_Coefficient_1064'][:, tind]
+            ),
+            dims = ['gate', 'time'],
+            coords = dict(
+                gate = np.arange(len(hght1d)),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Particulate backscatter coefficient profile at 1064 nm for each record',
+                units='km**-1 sr**-1'
+            )
+        )
+        pbsc532 = xr.DataArray(
+            data = np.ma.masked_where(
+                hdf['profile']['Particulate_Backscatter_Coefficient_532'][:, tind] <= 0.,
+                hdf['profile']['Particulate_Backscatter_Coefficient_532'][:, tind]
+            ),
+            dims = ['gate', 'time'],
+            coords = dict(
+                gate = np.arange(len(hght1d)),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Particulate backscatter coefficient profile at 532 nm for each record',
+                units='km**-1 sr**-1'
+            )
+        )
+        pbsc355 = xr.DataArray(
+            data = np.ma.masked_where(
+                hdf['profile']['Particulate_Backscatter_Coefficient_355'][:, tind] <= 0.,
+                hdf['profile']['Particulate_Backscatter_Coefficient_355'][:, tind]
+            ),
+            dims = ['gate', 'time'],
+            coords = dict(
+                gate = np.arange(len(hght1d)),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Particulate backscatter coefficient profile at 355 nm for each record',
+                units='km**-1 sr**-1'
+            )
+        )
+        msf1064 = xr.DataArray(
+            data = np.ma.masked_where(
+                hdf['profile']['Multiple_Scattering_Factor_1064'][:, tind] < 0.,
+                hdf['profile']['Multiple_Scattering_Factor_1064'][:, tind]
+            ),
+            dims = ['gate', 'time'],
+            coords = dict(
+                gate = np.arange(len(hght1d)),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Multiple scattering factor profile at 1064 nm for each record',
+                units='#'
+            )
+        )
+        msf532 = xr.DataArray(
+            data = np.ma.masked_where(
+                hdf['profile']['Multiple_Scattering_Factor_532'][:, tind] < 0.,
+                hdf['profile']['Multiple_Scattering_Factor_532'][:, tind]
+            ),
+            dims = ['gate', 'time'],
+            coords = dict(
+                gate = np.arange(len(hght1d)),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Multiple scattering factor profile at 532 nm for each record',
+                units='#'
+            )
+        )
+        msf355 = xr.DataArray(
+            data = np.ma.masked_where(
+                hdf['profile']['Multiple_Scattering_Factor_355'][:, tind] < 0.,
+                hdf['profile']['Multiple_Scattering_Factor_355'][:, tind]
+            ),
+            dims = ['gate', 'time'],
+            coords = dict(
+                gate = np.arange(len(hght1d)),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Multiple scattering factor profile at 355 nm for each record',
+                units='#'
             )
         )
         ext1064 = xr.DataArray(
@@ -3249,6 +3379,35 @@ class Cpl(Lidar):
                 units='#'
             )
         )
+        ftype = xr.DataArray(
+            data = hdf['profile']['Feature_Type'][:, tind],
+            dims = ['gate', 'time'],
+            coords = dict(
+                gate = np.arange(len(hght1d)),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Feature mask (0: Invalid; 1: Cloud; 2: Undetermined; 3: Aerosol)',
+                units='#'
+            )
+        )
+        fscore = xr.DataArray(
+            data = np.ma.masked_where(
+            	hdf['profile']['Feature_Type_Score'][:, tind] < -10,
+            	hdf['profile']['Feature_Type_Score'][:, tind]
+            ),
+            dims = ['gate', 'time'],
+            coords = dict(
+                gate = np.arange(len(hght1d)),
+                time = dt,
+                lat = lat,
+                lon = lon),
+            attrs = dict(
+                description='Feature type confidence (-10/10: High aerosol/cloud; -1/1: Low aerosol/cloud)',
+                units='#'
+            )
+        )
 
         # metadata for attributes
         try:
@@ -3264,13 +3423,21 @@ class Cpl(Lidar):
         # construct the dataset
         ds = xr.Dataset(
             data_vars={
+                'pbsc_1064': pbsc1064,
+                'pbsc_532': pbsc532,
+                'pbsc_355': pbsc355,
+                'msf_1064': msf1064,
+                'msf_532': msf532,
+                'msf_355': msf355,
                 'dpol_1064': dpol1064,
                 'ext_1064': ext1064,
                 'ext_532': ext532,
                 'ext_355': ext355,
                 'cod_1064': cod1064,
                 'cod_532': cod532,
-                'cod_355': cod355
+                'cod_355': cod355,
+                'feature': ftype,
+                'feature_score': fscore
             },
             coords={
                 'gate': np.arange(len(hght1d)),
@@ -3324,7 +3491,7 @@ class Cpl(Lidar):
         dt = np.array(
             [date + timedelta(
                 seconds=int((86400. * (jday[i, 1] - 1)).round())
-            ) for i in range(jday.shape[0])], dtype='datetime64[ms]'
+            ) for i in range(jday.shape[0])], dtype='datetime64[ns]'
         )
         dt, tind, tinv = np.unique(
             dt, return_index=True, return_inverse=True
@@ -3542,7 +3709,7 @@ class Cpl(Lidar):
         
         # extract L1B data valid at the L2 profile midpoints
         l1b_sub = l1b_data[['er2_altitude', 'er2_heading', 'er2_roll']].reindex(
-            time=l2_sub.time, method='nearest', tolerance='5S'
+            time=l2_sub.time, method='nearest', tolerance='5s'
         )
         
         return xr.merge(
@@ -3586,7 +3753,7 @@ class VAD(object):
         time_raw = vad.time.values
 
         time_dt = [julian.from_jd(time_raw[i], fmt='jd') for i in range(len(time_raw))] # Python datetime object
-        time_dt64 = np.array(time_dt, dtype='datetime64[ms]') # Numpy datetime64 object (e.g., for plotting)
+        time_dt64 = np.array(time_dt, dtype='datetime64[ns]') # Numpy datetime64 object (e.g., for plotting)
 
         radar_range = vad['range'].values
 

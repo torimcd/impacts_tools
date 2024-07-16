@@ -295,6 +295,9 @@ class Match(ABC):
             mask[
                 (lidar_dataset['height'].values >= alt_bounds_p3[0] - 250.) &
                 (lidar_dataset['height'].values <= alt_bounds_p3[1] + 250.) &
+                (~np.isnan(lidar_dataset['pbsc_1064'].values)) &
+                (~np.isnan(lidar_dataset['pbsc_532'].values)) &
+                (~np.isnan(lidar_dataset['pbsc_355'].values)) &
                 (~np.isnan(lidar_dataset['ext_1064'].values)) &
                 (~np.isnan(lidar_dataset['ext_532'].values)) &
                 (~np.isnan(lidar_dataset['ext_355'].values)) &
@@ -374,6 +377,36 @@ class Match(ABC):
             )
             data_vars = {'atb_1064': atb1064, 'atb_532': atb532, 'atb_355': atb355}
         elif self.name == 'Matched CPL Profiles':
+            pbsc1064 = xr.DataArray(
+                data =  (
+                    xr.DataArray(np.ones(lidar_dataset.dims['gate']), dims=('gate')) *
+                   lidar_dataset['pbsc_1064']).values.flatten(),
+                dims = 'gate_idx',
+                coords = dict(
+                    time = time_flat, height = hght, distance = dist,
+                    lat = lat, lon = lon),
+                attrs = lidar_dataset['pbsc_1064'].attrs
+            )
+            pbsc532 = xr.DataArray(
+                data =  (
+                    xr.DataArray(np.ones(lidar_dataset.dims['gate']), dims=('gate')) *
+                    lidar_dataset['pbsc_532']).values.flatten(),
+                dims = 'gate_idx',
+                coords = dict(
+                    time = time_flat, height = hght, distance = dist,
+                    lat = lat, lon = lon),
+                attrs =lidar_dataset['pbsc_532'].attrs
+            )
+            pbsc355 = xr.DataArray(
+                data =  (
+                    xr.DataArray(np.ones(lidar_dataset.dims['gate']), dims=('gate')) *
+                    lidar_dataset['pbsc_355']).values.flatten(),
+                dims = 'gate_idx',
+                coords = dict(
+                    time = time_flat, height = hght, distance = dist,
+                    lat = lat, lon = lon),
+                attrs = lidar_dataset['pbsc_355'].attrs
+            )
             dpol1064 = xr.DataArray(
                 data =  (
                     xr.DataArray(np.ones(lidar_dataset.dims['gate']), dims=('gate')) *
@@ -415,6 +448,7 @@ class Match(ABC):
                 attrs = lidar_dataset['ext_355'].attrs
             )
             data_vars = {
+                'pbsc_1064': pbsc1064, 'pbsc_532': pbsc532, 'pbsc_355': pbsc355,
                 'dpol_1064': dpol1064, 'ext_1064': ext1064, 'ext_532': ext532,
                 'ext_355': ext355
             }
@@ -507,6 +541,16 @@ class Match(ABC):
                     ),
                     units = 'km**-1'
                 )
+                match_dict[f'pbsc_{wavelength}'] = dict(
+                    data = np.ma.masked_where(
+                        prind1d == 0, lidar_qc[f'pbsc_{wavelength}'].values[prind1d]
+                    ),
+                    description = (
+                        'Mean particulate backscatter coefficient profile at '
+                        f'{wavelength} nm among matched lidar gates'
+                    ),
+                    units = 'km**-1 sr**-1'
+                )
             
         # perform the matching routine
         if query_k == 1: # nearest neighbor
@@ -527,7 +571,6 @@ class Match(ABC):
                         W_d_k2 * match_dict[f'atb_{wavelength}']['data'], axis=1
                     ) # weighted sum of ATB per N-s period
                     w2 = np.ma.sum(W_d_k2, axis=1) # sum of weights per N-s period
-                    #dbz_matched_temp = dbz_matched.copy()
                     match_dict[f'atb_{wavelength}']['data'] = w1 / w2 # flatten matched, weighted ATB
                     '''
                     dbz_stdev = np.ma.zeros(dbz_matched.shape[0])
@@ -546,7 +589,9 @@ class Match(ABC):
                         dbz_stdev > 5., dbz_matched).filled(np.nan) # mask suspected skin paint artifact
                     '''
             elif self.name == 'Matched CPL Profiles': # L2 profile data
-                for var in ['dpol_1064', 'ext_1064', 'ext_532', 'ext_355']:
+                for var in [
+                        'pbsc_1064', 'pbsc_532', 'pbsc_355', 'dpol_1064',
+                        'ext_1064', 'ext_532', 'ext_355']:
                     W_d_k2 = np.ma.masked_where(
                         np.ma.getmask(match_dict[var]['data']),
                         W_d_k.copy()
@@ -626,6 +671,9 @@ class Match(ABC):
             )
         elif self.name == 'Matched CPL Profiles':
             mask_final = (
+                np.isnan(match_dict['pbsc_1064']['data']) +
+                np.isnan(match_dict['pbsc_532']['data']) +
+                np.isnan(match_dict['pbsc_355']['data']) +
                 np.isnan(match_dict['dpol_1064']['data']) +
                 np.isnan(match_dict['ext_1064']['data']) +
                 np.isnan(match_dict['ext_532']['data']) +
@@ -691,7 +739,9 @@ class Match(ABC):
                     )
                 )
         elif self.name == 'Matched CPL Profiles':
-            for var in ['dpol_1064', 'ext_1064', 'ext_532', 'ext_355']:
+            for var in [
+                    'pbsc_1064', 'pbsc_532', 'pbsc_355', 'dpol_1064',
+                    'ext_1064', 'ext_532', 'ext_355']:
                 data_vars[var] = xr.DataArray(
                     data = np.ma.masked_where(mask_final, match_dict[var]['data']),
                     dims = 'time',
