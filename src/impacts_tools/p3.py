@@ -990,7 +990,161 @@ class Instrument(ABC):
                 ds_downsampled = self.data.resample(
                     time_raw=tres).mean(skipna=True, keep_attrs=True)
                 return ds_downsampled # return new dataset (keep original resolution)
+
+# ====================================== #
+# DLH
+# ====================================== #
+class Dlh(Instrument):
+    """
+    A class to represent the DLH flown on the P-3 during the IMPACTS field campaign.
+    Inherits from Instrument()
     
+    Parameters
+    ----------
+    filepath: str
+        File path to the DLH data file
+    p3_object: impacts_tools.p3.P3() object or None
+        The optional P-3 Met-Nav object to automatically trim and average the DLH data
+    start_time: np.datetime64 or None
+        The initial time of interest eg. if looking at a single flight leg
+    end_time: np.datetime64 or None
+        The final time of interest eg. if looking at a single flight leg
+    tres: str
+        The time interval to average over (e.g., '5S' for 5 seconds)
+    """
+
+    def __init__(self, filepath, date, p3_object=None, start_time=None, end_time=None, tres='1S'):
+        self.name = 'DLH'
+        
+        # read the raw data
+        self.data = self.readfile(filepath, date)
+        """
+        xarray.Dataset of DLH variables and attributes
+        Dimensions:
+            - time: np.array(np.datetime64[ns]) - The UTC time start of the N-s upsampled interval
+        Coordinates:
+            - time (time): np.array(np.datetime64[ns]) - The UTC time start of the N-s upsampled interval
+        Variables:
+            - r_H2O (time): xarray.DataArray(float) - Water vapor mixing ratio (ppmv)
+            - RHi (time): xarray.DataArray(float) - Relative humidity with respect to ice (percent)
+            - RHw (time): xarray.DataArray(float) - Relative humidity with respect to liquid (percent)
+        """
+        
+        # trim dataset to P-3 time bounds or from specified start/end
+        if p3_object is not None:
+            self.data, tres = self.trim_to_p3(p3_object)
+        elif (start_time is not None) or (end_time is not None):
+            self.data = self.trim_time_bounds(start_time, end_time, tres)
+            
+        # downsample data if specified by the P-3 Met-Nav data or tres argument
+        ds_downsampled = self.downsample(tres)
+
+    def readfile(self, filepath, date):
+        """
+        Reads the DLH data file and unpacks the fields into an xarray.Dataset
+
+        Parameters
+        ----------
+        filepath : str
+            Path to the data file
+        date: str
+            Flight start date in YYYY-mm-dd format
+        p3_object: impacts_tools.p3.P3() or None
+            P-3 Met-Nav object to optionally contrain times and average data
+        start_time : np.datetime64 or None
+            The initial time of interest
+        end_time : np.datetime64 or None
+            The final time of interest
+        tres: str
+            The time interval to average over (e.g., '5S' for 5 seconds)
+
+        Returns
+        -------
+        data : xarray.Dataset
+            The unpacked dataset
+        """
+        # get header info following the NASA AMES format
+        header = parse_header(open(filepath, 'r'), date)
+
+        # parse the data
+        data_raw = np.genfromtxt(
+            filepath, delimiter=',', skip_header=header['NLHEAD'],
+            missing_values=header['VMISS'], usemask=True, filling_values=np.nan
+        )
+
+        # construct dictionary of variable data and metadata
+        readfile = {}
+        for jj, unit in enumerate(header['VUNIT']):
+            header['VUNIT'][jj] = unit.split(',')[0]
+        for jj, name in enumerate(header['VNAME']):
+            readfile[name] = np.array(data_raw[:, jj] * header['VSCAL'][jj])
+            readfile[name][readfile[name]==header['VMISS'][jj]] = np.nan
+
+        # populate dataset attributes
+        p3_attrs = {
+            'Experiment': 'IMPACTS',
+            'Platform': 'P-3',
+            'Mission PI': 'Lynn McMurdie (lynnm@uw.edu)'}
+        instrum_info_counter = 1
+        for ii, comment in enumerate(header['NCOM'][:-1]): # add global attrs
+            parsed_comment = comment.split(':')
+            if len(parsed_comment) > 1:
+                p3_attrs[parsed_comment[0]] = parsed_comment[1][1:]
+            else: # handles multiple instrument info lines in *_R0.ict files
+                instrum_info_counter += 1
+                p3_attrs[
+                    'INSTRUMENT_INFO_'+str(instrum_info_counter)] = parsed_comment[0][1:]
+
+        # compute time
+        sec_frac, sec = np.modf(readfile['time'])
+        time = np.array([
+            np.datetime64(date) + np.timedelta64(int(sec[i]), 's') +
+            np.timedelta64(int(np.round(1000. * sec_frac[i])), 'ms')
+            for i in range(len(readfile['time']))], dtype='datetime64[ns]'
+        )
+
+        # populate data arrays
+        r_H2O = xr.DataArray(
+            data = np.ma.masked_invalid(readfile['H2O_DLH']),
+            dims = ['time'],
+            coords = dict(time = time),
+            attrs = dict(
+                description='water vapor mixing ratio',
+                units='ppmv')
+        )
+        RHi = xr.DataArray(
+            data = np.ma.masked_invalid(readfile['RHi_DLH']),
+            dims = ['time'],
+            coords = dict(time = time),
+            attrs = dict(
+                description='RH with respect to ice',
+                units='percent')
+        )
+
+        RHw = xr.DataArray(
+            data = np.ma.masked_invalid(readfile['RHw_DLH']),
+            dims = ['time'],
+            coords = dict(time = time),
+            attrs = dict(
+                description='RH with respect to liquid',
+                units='percent')
+        )
+
+        # put everything together into an XArray Dataset
+        ds = xr.Dataset(
+            data_vars={
+                'r_H2O': r_H2O,
+                'RHi': RHi,
+                'RHw': RHw
+            },
+            coords={
+                'time': time
+            },
+            attrs=p3_attrs
+        )
+
+        return ds
+
 # ====================================== #
 # TAMMS
 # ====================================== #
