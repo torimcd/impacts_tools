@@ -2483,7 +2483,9 @@ class Psd(Instrument):
         self.data = self.downsample(tres)
         
         # compute bulk properties
-        if calc_bulk:
+        if calc_bulk and p3_object:
+            self.data = self.bulk_properties(calc_gamma_params, dbz_matched, p3_object)
+        elif calc_bulk:
             self.data = self.bulk_properties(calc_gamma_params, dbz_matched)
         
     def readfile_uioops(
@@ -3257,7 +3259,7 @@ class Psd(Instrument):
         return psd_merged
                 
     def bulk_properties(
-            self, calc_gamma_params=False, dbz_matched=(None, None, None, None)):
+            self, calc_gamma_params=False, dbz_matched=(None, None, None, None), p3_object=None):
         """
         Compute bulk microphysical properties from the PSD data.
         
@@ -3267,6 +3269,8 @@ class Psd(Instrument):
             Optionally compute PSD N0, mu, lambda (takes some time)
         dbz_matched : tuple of impacts_tools.match.Radar().dbz_* xarray.DataArray or None
             Matched radar data to use in deriving a time-varying m-D relationship.
+        p3_object: None or p3.P3()
+            Optionally compute the Z-weighted fall speed requiring pres and temp.
         """
         with np.errstate(divide='ignore', invalid='ignore'): # suppress divide by zero warnings
             # initialize gamma fitting technique
@@ -3297,9 +3301,10 @@ class Psd(Instrument):
             mass_bf = mass_particle * self.data['count'] # binned mass (g)
             mass_rel_bf = mass_bf.cumsum(
                 dim='size') / mass_bf.cumsum(dim='size')[-1, :] # binned mass fraction
-            z_bf_temp = 1.e12 * (0.174 / 0.93) * (6. / np.pi / 0.934) ** 2 * (
+            zbin_bf = 1.e12 * (0.174 / 0.93) * (6. / np.pi / 0.934) ** 2 * (
                 mass_particle ** 2 * self.data['count'] / self.data['sv']
-            ).sum(dim='size') # simulated Z (mm^6 m^-3)
+            ) # simulated Z per size bin (mm^6 m^-3)
+            z_bf_temp = zbin_bf.sum(dim='size') # simulated Z (mm^6 m^-3)
             iwc_bf_temp = 10. ** 6 * (mass_bf / self.data['sv']).sum(dim='size') # IWC (g m-3)
             # dmm_bf_temp = xr.full_like(nt_temp, np.nan) # allocate array of nan
             # dmm_bf_temp[~np.isnan(mass_rel_bf[-1,:])] = self.data['bin_center'][
@@ -3577,6 +3582,32 @@ class Psd(Instrument):
                     )
                 )
                 
+                # get binned best forward binned Z (linear units)
+                binZ_w = xr.DataArray(
+                    data = Z.binZ_w[
+                        np.argmin(dbz_error, axis=0), :, np.arange(Z.binZ_w.shape[2])
+                    ].T,
+                    dims = ['size', 'time']
+                )
+                binZ_ka = xr.DataArray(
+                    data = Z.binZ_ka[
+                        np.argmin(dbz_error, axis=0), :, np.arange(Z.binZ_ka.shape[2])
+                    ].T,
+                    dims = ['size', 'time']
+                )
+                binZ_ku = xr.DataArray(
+                    data = Z.binZ_ku[
+                        np.argmin(dbz_error, axis=0), :, np.arange(Z.binZ_ku.shape[2])
+                    ].T,
+                    dims = ['size', 'time']
+                )
+                binZ_x = xr.DataArray(
+                    data = Z.binZ_x[
+                        np.argmin(dbz_error, axis=0), :, np.arange(Z.binZ_x.shape[2])
+                    ].T,
+                    dims = ['size', 'time']
+                )
+                
                 # compute bulk properties
                 mass_particle = (am * (
                     self.data['bin_center'] / 10.
@@ -3618,6 +3649,11 @@ class Psd(Instrument):
                     mass_ls / self.data['sv']
                 ).sum(dim='size') # mass-weighted mean aspect ratio
                 rhoe_ls_temp = (iwc_ls_temp / 10. ** 6) / vol # eff density from Chase et al. (2018) (g cm**-3)
+                if p3_object:
+                    VZw = self.calc_VZ(p3_object, mass_particle, binZ_w)
+                    VZka = self.calc_VZ(p3_object, mass_particle, binZ_ka)
+                    VZku = self.calc_VZ(p3_object, mass_particle, binZ_ku)
+                    VZx = self.calc_VZ(p3_object, mass_particle, binZ_x)
                 
                 # optionally compute gamma fit params for each observation
                 if calc_gamma_params:
@@ -4102,6 +4138,38 @@ class Psd(Instrument):
                     description='Effective density [Leinonen and Szyrmer (2015) m-D relationships]',
                     units = 'g cm-3')
             ).where(np.sum(dbz_error, axis=0) > 0.)
+            VZ_w = xr.DataArray(
+                data = VZw,
+                dims = 'time',
+                coords = dict(time=self.data.time),
+                attrs = dict(
+                    description='W-band reflectivity-weighted fall speed',
+                    units = 'm s-1')
+            ).where(np.sum(dbz_error, axis=0) > 0.)
+            VZ_ka = xr.DataArray(
+                data = VZka,
+                dims = 'time',
+                coords = dict(time=self.data.time),
+                attrs = dict(
+                    description='Ka-band reflectivity-weighted fall speed',
+                    units = 'm s-1')
+            ).where(np.sum(dbz_error, axis=0) > 0.)
+            VZ_ku = xr.DataArray(
+                data = VZku,
+                dims = 'time',
+                coords = dict(time=self.data.time),
+                attrs = dict(
+                    description='Ku-band reflectivity-weighted fall speed',
+                    units = 'm s-1')
+            ).where(np.sum(dbz_error, axis=0) > 0.)
+            VZ_x = xr.DataArray(
+                data = VZx,
+                dims = 'time',
+                coords = dict(time=self.data.time),
+                attrs = dict(
+                    description='X-band reflectivity-weighted fall speed',
+                    units = 'm s-1')
+            ).where(np.sum(dbz_error, axis=0) > 0.)
             data_vars = {
                 'dbz_w_psd': dbz_w, 'dbz_ka_psd': dbz_ka, 'dbz_ku_psd': dbz_ku, 'dbz_x_psd': dbz_x, 
                 'n': n,
@@ -4120,7 +4188,8 @@ class Psd(Instrument):
                 'area_ratio_mean_n': ar_nw, 'area_ratio_mean_bf': ar_bf, 'area_ratio_mean_hy': ar_hy,
                 'area_ratio_mean_ch': ar_ch, 'area_ratio_mean_ls': ar_ls,
                 'aspect_ratio_mean_n': asr_nw, 'aspect_ratio_mean_bf': asr_bf, 'aspect_ratio_mean_hy': asr_hy,
-                'aspect_ratio_mean_ch': asr_ch, 'aspect_ratio_mean_ls': asr_ls
+                'aspect_ratio_mean_ch': asr_ch, 'aspect_ratio_mean_ls': asr_ls,
+                'VZ_w': VZ_w, 'VZ_ka': VZ_ka, 'VZ_ku': VZ_ku, 'VZ_x': VZ_x
             }
         else:
             data_vars = {
@@ -4173,6 +4242,42 @@ class Psd(Instrument):
             ).transpose('size', 'time')
         
         return ds_merged
+    
+    def calc_VZ(self, p3_object, mass_array, Z_array):
+        '''
+        Compute the reflectivity-weighted fall speed for a given
+        PSD and m-D relationship.
+        Inputs:
+            p3_object: P3() object with temperature, pressure info
+            mass_array: particle mass for each size bin [g]
+            Z_array: linear reflectivity for each size bin [mm**6 m**-3]
+        '''
+        # NOTE: Dmax and M in SI units, need to scale appropriately
+        T_K = p3_object.data.temp + 273.15 # degC to K
+        p_Pa = 100. * p3_object.data.pres_static # hPa to Pa
+        rho_a = p_Pa / (287.15 * T_K)
+        eta = 18.27 * (291.15 + 120.) / (T_K + 120.) * (
+            T_K / 291.15
+        )**1.5 / 1e6  # Sutherland's formula for dynamic viscosity
+        nu = eta / rho_a # kinetic viscosity
+        
+        # modified Best number
+        Ar = xr.where(
+            self.data.area_ratio > 0., self.data.area_ratio, 0.6
+        ) # set 0, nan to 0.6
+        X = rho_a / eta**2 * 8 * (mass_array / 1000.) * 9.81 / (
+            np.pi * np.sqrt(Ar))
+
+        # Reynolds number
+        Re = 16. * (np.sqrt(1 + 4. * np.sqrt(X) / 64. / np.sqrt(0.35)) - 1.)**2
+
+        # individual particle fall speed for each size bin
+        V = nu / (self.data.bin_center / 1000.) * Re
+        
+        # Z-weighted fall speed
+        VZ = (V * Z_array).sum(dim='size') / Z_array.sum(dim='size')
+        
+        return VZ
     
     def calc_chisquare(
             self, x, n, iwc, z, a, b, rime_ind=None, exponential=False):

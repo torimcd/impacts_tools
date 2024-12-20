@@ -307,6 +307,12 @@ class forward_Z():
         K = tmatrix_aux.K_w_sqr[lamb]
         coef4 = (lamb**4)/(np.pi**5*K) #mm^4
         
+        # binned Z, linear units
+        z_x_bin = coef * self.sigma_x * self.PSD * self.dD
+        z_ku_bin = coef2 * self.sigma_ku * self.PSD * self.dD
+        z_ka_bin = coef3 * self.sigma_ka * self.PSD * self.dD
+        z_w_bin = coef4 * self.sigma_w * self.PSD * self.dD
+        
         #calculate, output is in dBZ
         Z_x = 10*np.log10(coef*np.nansum(self.sigma_x*self.PSD*self.dD,axis=1))
         Z_ku = 10*np.log10(coef2*np.nansum(self.sigma_ku*self.PSD*self.dD,axis=1))
@@ -323,3 +329,7 @@ class forward_Z():
         self.Z_ku = Z_ku.T
         self.Z_ka = Z_ka.T
         self.Z_w = Z_w.T
+        self.binZ_x = z_x_bin.T # sims x bins x times
+        self.binZ_ku = z_ku_bin.T
+        self.binZ_ka = z_ka_bin.T
+        self.binZ_w = z_w_bin.T
