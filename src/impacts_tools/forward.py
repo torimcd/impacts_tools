@@ -131,7 +131,7 @@ class forward_Z():
             bins = np.append(np.linspace(1e-4,3e-3,5),np.linspace(3e-3,2.20e-2,7))
             whichbin = np.digitize(ii.Dmax,bins=bins)
             ii['bin_i'] = whichbin
-            df = ii.groupby('bin_i').median()
+            df = ii.groupby('bin_i').median(numeric_only=True)
             df = df.reindex(np.arange(0,len(bins)))
             df = df.interpolate()
             df = df.dropna(how='all')
@@ -241,7 +241,7 @@ class forward_Z():
             bins = np.append(np.linspace(1e-4,3e-3,5),np.linspace(3e-3,2.20e-2,7))
             whichbin = np.digitize(ii.Dmax,bins=bins)
             ii['bin_i'] = whichbin
-            df = ii.groupby('bin_i').median()
+            df = ii.groupby('bin_i').median(numeric_only=True)
             df = df.reindex(np.arange(0,len(bins)))
             df = df.interpolate()
             df = df.dropna(how='all')
