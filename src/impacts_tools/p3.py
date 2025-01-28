@@ -2547,6 +2547,7 @@ class Psd(Instrument):
                                  count_habit_temp.shape[2])
                                )
                     )
+                    area_temp = data['total_area'].values.T
                     ar_temp = data['mean_area_ratio'].values.T
                     if 'mean_aspect_ratio_ellipse' in data.data_vars:
                         asr_temp = data['mean_aspect_ratio_ellipse'].values.T
@@ -2630,6 +2631,16 @@ class Psd(Instrument):
                         description='Number distribution function (PSD) per habit category',
                         units = 'cm-4')
                 )
+                area = xr.DataArray(
+                    data = area_temp,
+                    dims = ['size', 'time'],
+                    coords = dict(
+                        bin_center=bin_mid, bin_left=bin_min, bin_right=bin_max,
+                        bin_width=bin_width, time=time),
+                    attrs = dict(
+                        description='Projected area (extinction) per bin',
+                        units = '#')
+                )
                 ar = xr.DataArray(
                     data = ar_temp,
                     dims = ['size', 'time'],
@@ -2668,6 +2679,7 @@ class Psd(Instrument):
                         'sv': sv,
                         'ND': ND,
                         'ND_habit': ND_hab,
+                        'projected_area': area,
                         'area_ratio': ar,
                         'aspect_ratio': asr,
                         'active_time': at
@@ -2684,7 +2696,7 @@ class Psd(Instrument):
                         'Experiment': 'IMPACTS',
                         'Date': date,
                         'Aircraft': 'P-3',
-                        'Data Contact': 'Joseph Finlon (jfinlon@uw.edu)',
+                        'Data Contact': 'Joseph Finlon (joseph.a.finlon@nasa.gov)',
                         'Instrument PI': 'David Delene (david.delene@und.edu)',
                         'Mission PI': 'Lynn McMurdie (lynnm@uw.edu)',
                         'L3A Software': data.attrs['Software'],
@@ -3003,6 +3015,11 @@ class Psd(Instrument):
                         dims = ['habit', 'size', 'time'],
                         attrs = psd_temp['ND_habit'].attrs
                     ),
+                    'projected_area': xr.DataArray(
+                        data = np.tile(psd_temp['projected_area'].values, (2, 1)),
+                        dims = ['size', 'time'],
+                        attrs = psd_temp['projected_area'].attrs
+                    ),
                     'area_ratio': xr.DataArray(
                         data = np.tile(psd_temp['area_ratio'].values, (2, 1)),
                         dims = ['size', 'time'],
@@ -3206,6 +3223,24 @@ class Psd(Instrument):
                 bin_right=bin_max, bin_width=dD, time=psd_interp_2ds.time),
             attrs = psd_2ds['ND_habit'].attrs
         )
+        
+        # compute weighted projected area based on revised N(D)
+        if self.name == 'UIOOPS PSD':
+            psd_interp_2ds['projected_area'] = (dD / dD_2ds) * psd_interp_2ds['projected_area']
+            psd_interp_2ds['projected_area'].values[np.isnan(psd_interp_2ds['projected_area'])] = 0.
+            psd_interp_hvps['projected_area'] = (dD / dD_hvps) * psd_interp_hvps['projected_area']
+            psd_interp_hvps['projected_area'].values[np.isnan(psd_interp_hvps['projected_area'])] = 0.
+            area_temp = psd_interp_2ds['projected_area'].values + psd_interp_hvps['projected_area'].values
+        else:
+            area_temp = np.nan * np.zeros(ND.values.shape)
+        area = xr.DataArray(
+            data = np.ma.masked_where(area_temp == 0., area_temp),
+            dims = ['size', 'time'],
+            coords = dict(
+                bin_center=bin_mid, bin_left=bin_min, bin_right=bin_max,
+                bin_width=dD, time=psd_interp_2ds.time),
+            attrs = psd_2ds['projected_area'].attrs
+        )
 
         # compute weighted mean of aspect and area ratio distributions
         psd_interp_2ds['area_ratio'].values[np.isnan(psd_interp_2ds['area_ratio'])] = 0.
@@ -3240,6 +3275,7 @@ class Psd(Instrument):
                 'sv': sv,
                 'ND': ND,
                 'ND_habit': ND_hab,
+                'projected_area': area,
                 'area_ratio': ar,
                 'aspect_ratio': asr
             },
