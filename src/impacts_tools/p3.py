@@ -9,9 +9,11 @@ from datetime import datetime, timedelta
 from abc import ABC, abstractmethod
 from scipy.optimize import least_squares
 try: # try importing the pytmatrix package
-    from impacts_tools.forward import *
+    from impacts_tools import forward, forward_Chase
+    compute_ch = True # flag to compute dBZ, VZ using Chase et. al simulations
 except ImportError:
     print('Note: Install the pytmatrix package if you want to forward simulate reflectivity.')
+    compute_ch = False
 
 def parse_header(f, date, stream='default'):
         '''
@@ -860,10 +862,10 @@ class Instrument(ABC):
             if pd.to_timedelta(tres) > td_ds: # upsampling not supported
                 if 'count_habit' in self.data.data_vars:
                     sum_vars = ['count', 'count_habit', 'sv']
-                    mean_nan_vars = ['ND', 'ND_habit']
+                    mean_nan_vars = ['ND', 'ND_habit', 'projected_area']
                 else:
                     sum_vars = ['count', 'sv']
-                    mean_nan_vars = ['ND']
+                    mean_nan_vars = ['ND', 'projected_area']
                 mean_vars = ['area_ratio', 'aspect_ratio']
                 if '2DS' in self.instruments:
                     mean_vars.append('active_time_2ds')
@@ -3498,6 +3500,84 @@ class Psd(Instrument):
             ).sum(dim='size') # mass-weighted mean aspect ratio
             rhoe_ch_temp = (iwc_ch_temp / 10. ** 6) / vol # eff density from Chase et al. (2018) (g cm**-3)
             
+            if compute_ch and p3_object:
+            	# compute dbz from PSD across all four wavelengths
+                # uses forward routine, pytmatrix package, and scattering db
+                Zch = forward_Chase.forward_Z() #initialize class
+                Zch.set_PSD(
+                    PSD=self.data.ND.T * 10.**8, D=self.data.bin_center / 1000.,
+                    dD=self.data.bin_width / 100.) # get in proper fmt (mks units)
+                Zch.load_db(
+                    pressure=p3_object.data.pres_static.values[0], temperature=p3_object.data.temp.values[0]
+                ) # load Chase database and use DOI: 10.1175/2010JAS3379.1 for Vt calculation
+                Zch.fit_sigmas() # fit backscatter cross-sections and terminal fall speeds
+                Zch.calc_Z() # calculate dbz...outputs are Z.Z_x, Z.Z_ku, Z.Z_ka, Z.Z_w
+                
+                # forward dbz
+                dbz_w_ch = xr.DataArray(
+                    data = Zch.Z_w,
+                    dims = 'time',
+                    coords = dict(time = self.data.time),
+                    attrs = dict(
+                        description='Forward simulated W-band Z from PSD and Chase et al. scattering database',
+                        units = 'dBZ'
+                    )
+                )
+                dbz_ka_ch = xr.DataArray(
+                    data = Zch.Z_ka,
+                    dims = 'time',
+                    coords = dict(time = self.data.time),
+                    attrs = dict(
+                        description='Forward simulated Ka-band Z from PSD and Chase et al. scattering database',
+                        units = 'dBZ'
+                    )
+                )
+                dbz_ku_ch = xr.DataArray(
+                    data = Zch.Z_ku,
+                    dims = 'time',
+                    coords = dict(time = self.data.time),
+                    attrs = dict(
+                        description='Forward simulated Ku-band Z from PSD and Chase et al. scattering database',
+                        units = 'dBZ'
+                    )
+                )
+                
+                # get binned best forward binned Z (linear units)
+                binZ_w_ch = xr.DataArray(data = Zch.binZ_w.T, dims = ['size', 'time'])
+                binZ_ka_ch = xr.DataArray(data = Zch.binZ_ka.T, dims = ['size', 'time'])
+                binZ_ku_ch = xr.DataArray(data = Zch.binZ_ku.T, dims = ['size', 'time'])
+                
+                # reflectivity-weighted terminal fall speeds
+                VZw_ch = self.calc_VZ(p3_object, mass_particle, binZ_w_ch)
+                VZka_ch = self.calc_VZ(p3_object, mass_particle, binZ_ka_ch)
+                VZku_ch = self.calc_VZ(p3_object, mass_particle, binZ_ku_ch)
+                
+                # assign data arrays
+                VZ_w_ch = xr.DataArray(
+                    data = VZw_ch,
+                    dims = 'time',
+                    coords = dict(time=self.data.time),
+                    attrs = dict(
+                        description='W-band reflectivity-weighted fall speed',
+                        units = 'm s-1')
+                )
+                VZ_ka_ch = xr.DataArray(
+                    data = VZka_ch,
+                    dims = 'time',
+                    coords = dict(time=self.data.time),
+                    attrs = dict(
+                        description='Ka-band reflectivity-weighted fall speed',
+                        units = 'm s-1')
+                )
+                VZ_ku_ch = xr.DataArray(
+                    data = VZku_ch,
+                    dims = 'time',
+                    coords = dict(time=self.data.time),
+                    attrs = dict(
+                        description='Ku-band reflectivity-weighted fall speed',
+                        units = 'm s-1')
+                )
+            
             # optionally compute gamma fit params for each observation
             if calc_gamma_params:
                 N0_ch_temp = -999. * np.ones(len(self.data.time))
@@ -3524,7 +3604,7 @@ class Psd(Instrument):
                 
                 # compute dbz from PSD across all four wavelengths
                 # uses forward routine, pytmatrix package, and scattering db
-                Z = forward_Z() #initialize class
+                Z = forward.forward_Z() #initialize class
                 Z.set_PSD(
                     PSD=self.data.ND.T.values * 10.**8, D=self.data.bin_center.values / 1000.,
                     dD=self.data.bin_width.values / 100.) # get in proper fmt (mks units)
@@ -4245,6 +4325,13 @@ class Psd(Instrument):
                 'aspect_ratio_mean_n': asr_nw, 'aspect_ratio_mean_bf': asr_bf,
                 'aspect_ratio_mean_hy': asr_hy, 'aspect_ratio_mean_ch': asr_ch
             }
+        if compute_ch and p3_object: # add dbZ, VZ from Chase et al. simulations
+        	data_vars['dbz_w_ch'] = dbz_w_ch
+        	data_vars['dbz_ka_ch'] = dbz_ka_ch
+        	data_vars['dbz_ku_ch'] = dbz_ku_ch
+        	data_vars['VZ_w_ch'] = VZ_w_ch
+        	data_vars['VZ_ka_ch'] = VZ_ka_ch
+        	data_vars['VZ_ku_ch'] = VZ_ku_ch
         
         # put bulk properties together into an XArray DataSet
         ds = xr.Dataset(
@@ -4347,7 +4434,7 @@ class Psd(Instrument):
             mass_particle* ND_fit * dD
         ) # IWC from fit PSD (g m**-3)
         if rime_ind is not None:
-            Z_fit = forward_Z() #initialize class
+            Z_fit = forward.forward_Z() #initialize class
             Z_fit.set_PSD(PSD=ND_fit[np.newaxis,:]*10.**8, D=Dmax/100., dD=dD/100., Z_interp=True) # get the PSD in the format to use in the routine (mks units)
             Z_fit.load_split_L15() # Load the leinonen output
             Z_fit.fit_sigmas(Z_interp=True) # Fit the backscatter cross-sections
