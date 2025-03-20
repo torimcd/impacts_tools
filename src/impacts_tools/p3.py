@@ -2100,7 +2100,7 @@ class Und(Instrument):
             data_vars.update({'freq_rice2': ricefreq2})
         if ('2022' in date) or ('2023' in date): # WCM vars
             if '2022' in date:
-            	vname_twcwcm = (
+                vname_twcwcm = (
                     'Total Water Content based on the WCM Probe measurement '
                     'adjusted for baseline offset'
                 )
@@ -2117,8 +2117,8 @@ class Und(Instrument):
                 )
             else:
                 vname_twcwcm = (
-                	'Total Water Content based on the WCM-3000 Probe '
-                	'measurement adjusted for baseline offset'
+                    'Total Water Content based on the WCM-3000 Probe '
+                    'measurement adjusted for baseline offset'
                 )
                 vname_lwcwcm = (
                     'Liquid water content based on WCM-3000 probe measurement '
