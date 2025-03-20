@@ -2099,27 +2099,48 @@ class Und(Instrument):
             )
             data_vars.update({'freq_rice2': ricefreq2})
         if ('2022' in date) or ('2023' in date): # WCM vars
+            if '2022' in date:
+            	vname_twcwcm = (
+                    'Total Water Content based on the WCM Probe measurement '
+                    'adjusted for baseline offset'
+                )
+                vname_lwcwcm = (
+                    'Liquid Water Content element 083 based on the WCM Probe '
+                    'measurement adjusted for baseline offset'
+                )
+                vname_iwcwcm = (
+                    'Ice Water Content based on the WCM Probe measurement calculated '
+                    'with sampling efficiencies and adjusted for baseline offset'
+                )
+                vname_flgwcm = (
+                    'Parameter to determine if the WCM Probe is in cloud or not based on CIP'
+                )
+            else:
+                vname_twcwcm = (
+                	'Total Water Content based on the WCM-3000 Probe '
+                	'measurement adjusted for baseline offset'
+                )
+                vname_lwcwcm = (
+                    'Liquid water content based on WCM-3000 probe measurement '
+                    'calculated with sampling efficiencies and adjusted'
+                )
+                vname_iwcwcm = (
+                    'Ice Water Content based on the WCM-3000 Probe measurement calculated '
+                    'with sampling efficiencies and adjusted for baseline offset'
+                )
+                vname_flgwcm = (
+                    'Parameter to determine if the WCM-3000 Probe is in cloud or not based on CIP'
+                )
             twc_wcm = xr.DataArray(
-                data = np.ma.masked_invalid(
-                    readfile['Total Water Content based on the WCM Probe measurement adjusted for baseline offset']
-                ),
+                data = np.ma.masked_invalid(readfile[vname_twcwcm]),
                 dims = 'time',
                 coords = dict(time = time),
                 attrs = dict(
                     description='Total Water Content based on the WCM probe measurement (adjusted)',
                     units='g m-3')
             )
-            if '2022' in date:
-                vname_lwcwcm = (
-                    'Liquid Water Content element 083 based on the WCM Probe '
-                    'measurement adjusted for baseline offset'
-                )
-            else:
-                vname_lwcwcm = 'Liquid Water Content' # original varname clipped following "(element 083)"
             lwc_wcm = xr.DataArray(
-                data = np.ma.masked_invalid(
-                    readfile[vname_lwcwcm]
-                ),
+                data = np.ma.masked_invalid(readfile[vname_lwcwcm]),
                 dims = 'time',
                 coords = dict(time = time),
                 attrs = dict(
@@ -2127,12 +2148,7 @@ class Und(Instrument):
                     units='g m-3')
             )
             iwc_wcm = xr.DataArray(
-                data = np.ma.masked_invalid(
-                    readfile[
-                        'Ice Water Content based on the WCM Probe measurement calculated '
-                        'with sampling efficiencies and adjusted for baseline offset'
-                    ]
-                ),
+                data = np.ma.masked_invalid(readfile[vname_iwcwcm]),
                 dims = 'time',
                 coords = dict(time = time),
                 attrs = dict(
@@ -2143,9 +2159,7 @@ class Und(Instrument):
                     units='g m-3')
             )
             flag_cld = xr.DataArray(
-                data = np.ma.masked_invalid(
-                    readfile['Parameter to determine if the WCM Probe is in cloud or not based on CIP']
-                ),
+                data = np.ma.masked_invalid(readfile[vname_flgwcm]),
                 dims = 'time',
                 coords = dict(time = time),
                 attrs = dict(
