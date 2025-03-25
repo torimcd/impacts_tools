@@ -170,7 +170,7 @@ class forward_Z():
         # if V in scatd, then interpolate to get V(D)
         if 'V' in df:
             f_V = scipy.interpolate.interp1d(
-                df.Dmax.values, df.V.values,
+                df.Dmax.values[:-1], df.V.values[:-1],
                 fill_value='extrapolate', kind='linear', bounds_error=False
             )
             VD = f_V(self.D[0, :])
@@ -182,7 +182,7 @@ class forward_Z():
         # if V in scatd, then interpolate to get V(D)
         if 'Vsurf' in df:
             f_Vsurf = scipy.interpolate.interp1d(
-                df.Dmax.values, df.Vsurf.values,
+                df.Dmax.values[:-1], df.Vsurf.values[:-1],
                 fill_value='extrapolate', kind='linear', bounds_error=False
             )
             VD_surf = f_Vsurf(self.D[0, :])
