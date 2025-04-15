@@ -2254,10 +2254,6 @@ class Exrad(Radar):
         if width_sigma is not None:
             self.data['width'] = self.despeckle(self.data['width'], width_sigma)
         
-        if resample_ref is not None:
-            self.data = self.resample(self.data, resample_ref)
-        
-        
    
 
     def readfile(self, filepath, start_time=None, end_time=None, dataset='2020'):
