@@ -9,9 +9,11 @@ from datetime import datetime, timedelta
 from abc import ABC, abstractmethod
 from scipy.optimize import least_squares
 try: # try importing the pytmatrix package
-    from impacts_tools.forward import *
+    from impacts_tools import forward, forward_Chase
+    compute_ch = True # flag to compute dBZ, VZ using Chase et. al simulations
 except ImportError:
     print('Note: Install the pytmatrix package if you want to forward simulate reflectivity.')
+    compute_ch = False
 
 def parse_header(f, date, stream='default'):
         '''
@@ -860,10 +862,10 @@ class Instrument(ABC):
             if pd.to_timedelta(tres) > td_ds: # upsampling not supported
                 if 'count_habit' in self.data.data_vars:
                     sum_vars = ['count', 'count_habit', 'sv']
-                    mean_nan_vars = ['ND', 'ND_habit']
+                    mean_nan_vars = ['ND', 'ND_habit', 'projected_area']
                 else:
                     sum_vars = ['count', 'sv']
-                    mean_nan_vars = ['ND']
+                    mean_nan_vars = ['ND', 'projected_area']
                 mean_vars = ['area_ratio', 'aspect_ratio']
                 if '2DS' in self.instruments:
                     mean_vars.append('active_time_2ds')
@@ -990,7 +992,161 @@ class Instrument(ABC):
                 ds_downsampled = self.data.resample(
                     time_raw=tres).mean(skipna=True, keep_attrs=True)
                 return ds_downsampled # return new dataset (keep original resolution)
+
+# ====================================== #
+# DLH
+# ====================================== #
+class Dlh(Instrument):
+    """
+    A class to represent the DLH flown on the P-3 during the IMPACTS field campaign.
+    Inherits from Instrument()
     
+    Parameters
+    ----------
+    filepath: str
+        File path to the DLH data file
+    p3_object: impacts_tools.p3.P3() object or None
+        The optional P-3 Met-Nav object to automatically trim and average the DLH data
+    start_time: np.datetime64 or None
+        The initial time of interest eg. if looking at a single flight leg
+    end_time: np.datetime64 or None
+        The final time of interest eg. if looking at a single flight leg
+    tres: str
+        The time interval to average over (e.g., '5S' for 5 seconds)
+    """
+
+    def __init__(self, filepath, date, p3_object=None, start_time=None, end_time=None, tres='1S'):
+        self.name = 'DLH'
+        
+        # read the raw data
+        self.data = self.readfile(filepath, date)
+        """
+        xarray.Dataset of DLH variables and attributes
+        Dimensions:
+            - time: np.array(np.datetime64[ns]) - The UTC time start of the N-s upsampled interval
+        Coordinates:
+            - time (time): np.array(np.datetime64[ns]) - The UTC time start of the N-s upsampled interval
+        Variables:
+            - r_H2O (time): xarray.DataArray(float) - Water vapor mixing ratio (ppmv)
+            - RHi (time): xarray.DataArray(float) - Relative humidity with respect to ice (percent)
+            - RHw (time): xarray.DataArray(float) - Relative humidity with respect to liquid (percent)
+        """
+        
+        # trim dataset to P-3 time bounds or from specified start/end
+        if p3_object is not None:
+            self.data, tres = self.trim_to_p3(p3_object)
+        elif (start_time is not None) or (end_time is not None):
+            self.data = self.trim_time_bounds(start_time, end_time, tres)
+            
+        # downsample data if specified by the P-3 Met-Nav data or tres argument
+        ds_downsampled = self.downsample(tres)
+
+    def readfile(self, filepath, date):
+        """
+        Reads the DLH data file and unpacks the fields into an xarray.Dataset
+
+        Parameters
+        ----------
+        filepath : str
+            Path to the data file
+        date: str
+            Flight start date in YYYY-mm-dd format
+        p3_object: impacts_tools.p3.P3() or None
+            P-3 Met-Nav object to optionally contrain times and average data
+        start_time : np.datetime64 or None
+            The initial time of interest
+        end_time : np.datetime64 or None
+            The final time of interest
+        tres: str
+            The time interval to average over (e.g., '5S' for 5 seconds)
+
+        Returns
+        -------
+        data : xarray.Dataset
+            The unpacked dataset
+        """
+        # get header info following the NASA AMES format
+        header = parse_header(open(filepath, 'r'), date)
+
+        # parse the data
+        data_raw = np.genfromtxt(
+            filepath, delimiter=',', skip_header=header['NLHEAD'],
+            missing_values=header['VMISS'], usemask=True, filling_values=np.nan
+        )
+
+        # construct dictionary of variable data and metadata
+        readfile = {}
+        for jj, unit in enumerate(header['VUNIT']):
+            header['VUNIT'][jj] = unit.split(',')[0]
+        for jj, name in enumerate(header['VNAME']):
+            readfile[name] = np.array(data_raw[:, jj] * header['VSCAL'][jj])
+            readfile[name][readfile[name]==header['VMISS'][jj]] = np.nan
+
+        # populate dataset attributes
+        p3_attrs = {
+            'Experiment': 'IMPACTS',
+            'Platform': 'P-3',
+            'Mission PI': 'Lynn McMurdie (lynnm@uw.edu)'}
+        instrum_info_counter = 1
+        for ii, comment in enumerate(header['NCOM'][:-1]): # add global attrs
+            parsed_comment = comment.split(':')
+            if len(parsed_comment) > 1:
+                p3_attrs[parsed_comment[0]] = parsed_comment[1][1:]
+            else: # handles multiple instrument info lines in *_R0.ict files
+                instrum_info_counter += 1
+                p3_attrs[
+                    'INSTRUMENT_INFO_'+str(instrum_info_counter)] = parsed_comment[0][1:]
+
+        # compute time
+        sec_frac, sec = np.modf(readfile['time'])
+        time = np.array([
+            np.datetime64(date) + np.timedelta64(int(sec[i]), 's') +
+            np.timedelta64(int(np.round(1000. * sec_frac[i])), 'ms')
+            for i in range(len(readfile['time']))], dtype='datetime64[ns]'
+        )
+
+        # populate data arrays
+        r_H2O = xr.DataArray(
+            data = np.ma.masked_invalid(readfile['H2O_DLH']),
+            dims = ['time'],
+            coords = dict(time = time),
+            attrs = dict(
+                description='water vapor mixing ratio',
+                units='ppmv')
+        )
+        RHi = xr.DataArray(
+            data = np.ma.masked_invalid(readfile['RHi_DLH']),
+            dims = ['time'],
+            coords = dict(time = time),
+            attrs = dict(
+                description='RH with respect to ice',
+                units='percent')
+        )
+
+        RHw = xr.DataArray(
+            data = np.ma.masked_invalid(readfile['RHw_DLH']),
+            dims = ['time'],
+            coords = dict(time = time),
+            attrs = dict(
+                description='RH with respect to liquid',
+                units='percent')
+        )
+
+        # put everything together into an XArray Dataset
+        ds = xr.Dataset(
+            data_vars={
+                'r_H2O': r_H2O,
+                'RHi': RHi,
+                'RHw': RHw
+            },
+            coords={
+                'time': time
+            },
+            attrs=p3_attrs
+        )
+
+        return ds
+
 # ====================================== #
 # TAMMS
 # ====================================== #
@@ -1943,27 +2099,48 @@ class Und(Instrument):
             )
             data_vars.update({'freq_rice2': ricefreq2})
         if ('2022' in date) or ('2023' in date): # WCM vars
+            if '2022' in date:
+                vname_twcwcm = (
+                    'Total Water Content based on the WCM Probe measurement '
+                    'adjusted for baseline offset'
+                )
+                vname_lwcwcm = (
+                    'Liquid Water Content element 083 based on the WCM Probe '
+                    'measurement adjusted for baseline offset'
+                )
+                vname_iwcwcm = (
+                    'Ice Water Content based on the WCM Probe measurement calculated '
+                    'with sampling efficiencies and adjusted for baseline offset'
+                )
+                vname_flgwcm = (
+                    'Parameter to determine if the WCM Probe is in cloud or not based on CIP'
+                )
+            else:
+                vname_twcwcm = (
+                    'Total Water Content based on the WCM-3000 Probe '
+                    'measurement adjusted for baseline offset'
+                )
+                vname_lwcwcm = (
+                    'Liquid water content based on WCM-3000 probe measurement '
+                    'calculated with sampling efficiencies and adjusted'
+                )
+                vname_iwcwcm = (
+                    'Ice Water Content based on the WCM-3000 Probe measurement calculated '
+                    'with sampling efficiencies and adjusted for baseline offset'
+                )
+                vname_flgwcm = (
+                    'Parameter to determine if the WCM-3000 Probe is in cloud or not based on CIP'
+                )
             twc_wcm = xr.DataArray(
-                data = np.ma.masked_invalid(
-                    readfile['Total Water Content based on the WCM Probe measurement adjusted for baseline offset']
-                ),
+                data = np.ma.masked_invalid(readfile[vname_twcwcm]),
                 dims = 'time',
                 coords = dict(time = time),
                 attrs = dict(
                     description='Total Water Content based on the WCM probe measurement (adjusted)',
                     units='g m-3')
             )
-            if '2022' in date:
-                vname_lwcwcm = (
-                    'Liquid Water Content element 083 based on the WCM Probe '
-                    'measurement adjusted for baseline offset'
-                )
-            else:
-                vname_lwcwcm = 'Liquid Water Content' # original varname clipped following "(element 083)"
             lwc_wcm = xr.DataArray(
-                data = np.ma.masked_invalid(
-                    readfile[vname_lwcwcm]
-                ),
+                data = np.ma.masked_invalid(readfile[vname_lwcwcm]),
                 dims = 'time',
                 coords = dict(time = time),
                 attrs = dict(
@@ -1971,12 +2148,7 @@ class Und(Instrument):
                     units='g m-3')
             )
             iwc_wcm = xr.DataArray(
-                data = np.ma.masked_invalid(
-                    readfile[
-                        'Ice Water Content based on the WCM Probe measurement calculated '
-                        'with sampling efficiencies and adjusted for baseline offset'
-                    ]
-                ),
+                data = np.ma.masked_invalid(readfile[vname_iwcwcm]),
                 dims = 'time',
                 coords = dict(time = time),
                 attrs = dict(
@@ -1987,9 +2159,7 @@ class Und(Instrument):
                     units='g m-3')
             )
             flag_cld = xr.DataArray(
-                data = np.ma.masked_invalid(
-                    readfile['Parameter to determine if the WCM Probe is in cloud or not based on CIP']
-                ),
+                data = np.ma.masked_invalid(readfile[vname_flgwcm]),
                 dims = 'time',
                 coords = dict(time = time),
                 attrs = dict(
@@ -2329,7 +2499,9 @@ class Psd(Instrument):
         self.data = self.downsample(tres)
         
         # compute bulk properties
-        if calc_bulk:
+        if calc_bulk and p3_object:
+            self.data = self.bulk_properties(calc_gamma_params, dbz_matched, p3_object)
+        elif calc_bulk:
             self.data = self.bulk_properties(calc_gamma_params, dbz_matched)
         
     def readfile_uioops(
@@ -2391,6 +2563,7 @@ class Psd(Instrument):
                                  count_habit_temp.shape[2])
                                )
                     )
+                    area_temp = data['total_area'].values.T
                     ar_temp = data['mean_area_ratio'].values.T
                     if 'mean_aspect_ratio_ellipse' in data.data_vars:
                         asr_temp = data['mean_aspect_ratio_ellipse'].values.T
@@ -2474,6 +2647,16 @@ class Psd(Instrument):
                         description='Number distribution function (PSD) per habit category',
                         units = 'cm-4')
                 )
+                area = xr.DataArray(
+                    data = area_temp,
+                    dims = ['size', 'time'],
+                    coords = dict(
+                        bin_center=bin_mid, bin_left=bin_min, bin_right=bin_max,
+                        bin_width=bin_width, time=time),
+                    attrs = dict(
+                        description='Projected area (extinction) per bin',
+                        units = '#')
+                )
                 ar = xr.DataArray(
                     data = ar_temp,
                     dims = ['size', 'time'],
@@ -2512,6 +2695,7 @@ class Psd(Instrument):
                         'sv': sv,
                         'ND': ND,
                         'ND_habit': ND_hab,
+                        'projected_area': area,
                         'area_ratio': ar,
                         'aspect_ratio': asr,
                         'active_time': at
@@ -2528,7 +2712,7 @@ class Psd(Instrument):
                         'Experiment': 'IMPACTS',
                         'Date': date,
                         'Aircraft': 'P-3',
-                        'Data Contact': 'Joseph Finlon (jfinlon@uw.edu)',
+                        'Data Contact': 'Joseph Finlon (joseph.a.finlon@nasa.gov)',
                         'Instrument PI': 'David Delene (david.delene@und.edu)',
                         'Mission PI': 'Lynn McMurdie (lynnm@uw.edu)',
                         'L3A Software': data.attrs['Software'],
@@ -2847,6 +3031,11 @@ class Psd(Instrument):
                         dims = ['habit', 'size', 'time'],
                         attrs = psd_temp['ND_habit'].attrs
                     ),
+                    'projected_area': xr.DataArray(
+                        data = np.tile(psd_temp['projected_area'].values, (2, 1)),
+                        dims = ['size', 'time'],
+                        attrs = psd_temp['projected_area'].attrs
+                    ),
                     'area_ratio': xr.DataArray(
                         data = np.tile(psd_temp['area_ratio'].values, (2, 1)),
                         dims = ['size', 'time'],
@@ -3050,6 +3239,24 @@ class Psd(Instrument):
                 bin_right=bin_max, bin_width=dD, time=psd_interp_2ds.time),
             attrs = psd_2ds['ND_habit'].attrs
         )
+        
+        # compute weighted projected area based on revised N(D)
+        if self.name == 'UIOOPS PSD':
+            psd_interp_2ds['projected_area'] = (dD / dD_2ds) * psd_interp_2ds['projected_area']
+            psd_interp_2ds['projected_area'].values[np.isnan(psd_interp_2ds['projected_area'])] = 0.
+            psd_interp_hvps['projected_area'] = (dD / dD_hvps) * psd_interp_hvps['projected_area']
+            psd_interp_hvps['projected_area'].values[np.isnan(psd_interp_hvps['projected_area'])] = 0.
+            area_temp = psd_interp_2ds['projected_area'].values + psd_interp_hvps['projected_area'].values
+        else:
+            area_temp = np.nan * np.zeros(ND.values.shape)
+        area = xr.DataArray(
+            data = np.ma.masked_where(area_temp == 0., area_temp),
+            dims = ['size', 'time'],
+            coords = dict(
+                bin_center=bin_mid, bin_left=bin_min, bin_right=bin_max,
+                bin_width=dD, time=psd_interp_2ds.time),
+            attrs = psd_2ds['projected_area'].attrs
+        )
 
         # compute weighted mean of aspect and area ratio distributions
         psd_interp_2ds['area_ratio'].values[np.isnan(psd_interp_2ds['area_ratio'])] = 0.
@@ -3084,6 +3291,7 @@ class Psd(Instrument):
                 'sv': sv,
                 'ND': ND,
                 'ND_habit': ND_hab,
+                'projected_area': area,
                 'area_ratio': ar,
                 'aspect_ratio': asr
             },
@@ -3103,7 +3311,7 @@ class Psd(Instrument):
         return psd_merged
                 
     def bulk_properties(
-            self, calc_gamma_params=False, dbz_matched=(None, None, None, None)):
+            self, calc_gamma_params=False, dbz_matched=(None, None, None, None), p3_object=None):
         """
         Compute bulk microphysical properties from the PSD data.
         
@@ -3113,6 +3321,8 @@ class Psd(Instrument):
             Optionally compute PSD N0, mu, lambda (takes some time)
         dbz_matched : tuple of impacts_tools.match.Radar().dbz_* xarray.DataArray or None
             Matched radar data to use in deriving a time-varying m-D relationship.
+        p3_object: None or p3.P3()
+            Optionally compute the Z-weighted fall speed requiring pres and temp.
         """
         with np.errstate(divide='ignore', invalid='ignore'): # suppress divide by zero warnings
             # initialize gamma fitting technique
@@ -3143,9 +3353,10 @@ class Psd(Instrument):
             mass_bf = mass_particle * self.data['count'] # binned mass (g)
             mass_rel_bf = mass_bf.cumsum(
                 dim='size') / mass_bf.cumsum(dim='size')[-1, :] # binned mass fraction
-            z_bf_temp = 1.e12 * (0.174 / 0.93) * (6. / np.pi / 0.934) ** 2 * (
+            zbin_bf = 1.e12 * (0.174 / 0.93) * (6. / np.pi / 0.934) ** 2 * (
                 mass_particle ** 2 * self.data['count'] / self.data['sv']
-            ).sum(dim='size') # simulated Z (mm^6 m^-3)
+            ) # simulated Z per size bin (mm^6 m^-3)
+            z_bf_temp = zbin_bf.sum(dim='size') # simulated Z (mm^6 m^-3)
             iwc_bf_temp = 10. ** 6 * (mass_bf / self.data['sv']).sum(dim='size') # IWC (g m-3)
             # dmm_bf_temp = xr.full_like(nt_temp, np.nan) # allocate array of nan
             # dmm_bf_temp[~np.isnan(mass_rel_bf[-1,:])] = self.data['bin_center'][
@@ -3303,6 +3514,84 @@ class Psd(Instrument):
             ).sum(dim='size') # mass-weighted mean aspect ratio
             rhoe_ch_temp = (iwc_ch_temp / 10. ** 6) / vol # eff density from Chase et al. (2018) (g cm**-3)
             
+            if compute_ch and p3_object:
+            	# compute dbz from PSD across all four wavelengths
+                # uses forward routine, pytmatrix package, and scattering db
+                Zch = forward_Chase.forward_Z() #initialize class
+                Zch.set_PSD(
+                    PSD=self.data.ND.T * 10.**8, D=self.data.bin_center / 1000.,
+                    dD=self.data.bin_width / 100.) # get in proper fmt (mks units)
+                Zch.load_db(
+                    pressure=p3_object.data.pres_static.values[0], temperature=p3_object.data.temp.values[0]
+                ) # load Chase database and use DOI: 10.1175/2010JAS3379.1 for Vt calculation
+                Zch.fit_sigmas() # fit backscatter cross-sections and terminal fall speeds
+                Zch.calc_Z() # calculate dbz...outputs are Z.Z_x, Z.Z_ku, Z.Z_ka, Z.Z_w
+                
+                # forward dbz
+                dbz_w_ch = xr.DataArray(
+                    data = Zch.Z_w,
+                    dims = 'time',
+                    coords = dict(time = self.data.time),
+                    attrs = dict(
+                        description='Forward simulated W-band Z from PSD and Chase et al. scattering database',
+                        units = 'dBZ'
+                    )
+                )
+                dbz_ka_ch = xr.DataArray(
+                    data = Zch.Z_ka,
+                    dims = 'time',
+                    coords = dict(time = self.data.time),
+                    attrs = dict(
+                        description='Forward simulated Ka-band Z from PSD and Chase et al. scattering database',
+                        units = 'dBZ'
+                    )
+                )
+                dbz_ku_ch = xr.DataArray(
+                    data = Zch.Z_ku,
+                    dims = 'time',
+                    coords = dict(time = self.data.time),
+                    attrs = dict(
+                        description='Forward simulated Ku-band Z from PSD and Chase et al. scattering database',
+                        units = 'dBZ'
+                    )
+                )
+                
+                # get binned best forward binned Z (linear units)
+                binZ_w_ch = xr.DataArray(data = Zch.binZ_w.T, dims = ['size', 'time'])
+                binZ_ka_ch = xr.DataArray(data = Zch.binZ_ka.T, dims = ['size', 'time'])
+                binZ_ku_ch = xr.DataArray(data = Zch.binZ_ku.T, dims = ['size', 'time'])
+                
+                # reflectivity-weighted terminal fall speeds
+                VZw_ch = self.calc_VZ(p3_object, mass_particle, binZ_w_ch)
+                VZka_ch = self.calc_VZ(p3_object, mass_particle, binZ_ka_ch)
+                VZku_ch = self.calc_VZ(p3_object, mass_particle, binZ_ku_ch)
+                
+                # assign data arrays
+                VZ_w_ch = xr.DataArray(
+                    data = VZw_ch,
+                    dims = 'time',
+                    coords = dict(time=self.data.time),
+                    attrs = dict(
+                        description='W-band reflectivity-weighted fall speed',
+                        units = 'm s-1')
+                )
+                VZ_ka_ch = xr.DataArray(
+                    data = VZka_ch,
+                    dims = 'time',
+                    coords = dict(time=self.data.time),
+                    attrs = dict(
+                        description='Ka-band reflectivity-weighted fall speed',
+                        units = 'm s-1')
+                )
+                VZ_ku_ch = xr.DataArray(
+                    data = VZku_ch,
+                    dims = 'time',
+                    coords = dict(time=self.data.time),
+                    attrs = dict(
+                        description='Ku-band reflectivity-weighted fall speed',
+                        units = 'm s-1')
+                )
+            
             # optionally compute gamma fit params for each observation
             if calc_gamma_params:
                 N0_ch_temp = -999. * np.ones(len(self.data.time))
@@ -3329,7 +3618,7 @@ class Psd(Instrument):
                 
                 # compute dbz from PSD across all four wavelengths
                 # uses forward routine, pytmatrix package, and scattering db
-                Z = forward_Z() #initialize class
+                Z = forward.forward_Z() #initialize class
                 Z.set_PSD(
                     PSD=self.data.ND.T.values * 10.**8, D=self.data.bin_center.values / 1000.,
                     dD=self.data.bin_width.values / 100.) # get in proper fmt (mks units)
@@ -3423,6 +3712,32 @@ class Psd(Instrument):
                     )
                 )
                 
+                # get binned best forward binned Z (linear units)
+                binZ_w = xr.DataArray(
+                    data = Z.binZ_w[
+                        np.argmin(dbz_error, axis=0), :, np.arange(Z.binZ_w.shape[2])
+                    ].T,
+                    dims = ['size', 'time']
+                )
+                binZ_ka = xr.DataArray(
+                    data = Z.binZ_ka[
+                        np.argmin(dbz_error, axis=0), :, np.arange(Z.binZ_ka.shape[2])
+                    ].T,
+                    dims = ['size', 'time']
+                )
+                binZ_ku = xr.DataArray(
+                    data = Z.binZ_ku[
+                        np.argmin(dbz_error, axis=0), :, np.arange(Z.binZ_ku.shape[2])
+                    ].T,
+                    dims = ['size', 'time']
+                )
+                binZ_x = xr.DataArray(
+                    data = Z.binZ_x[
+                        np.argmin(dbz_error, axis=0), :, np.arange(Z.binZ_x.shape[2])
+                    ].T,
+                    dims = ['size', 'time']
+                )
+                
                 # compute bulk properties
                 mass_particle = (am * (
                     self.data['bin_center'] / 10.
@@ -3464,6 +3779,11 @@ class Psd(Instrument):
                     mass_ls / self.data['sv']
                 ).sum(dim='size') # mass-weighted mean aspect ratio
                 rhoe_ls_temp = (iwc_ls_temp / 10. ** 6) / vol # eff density from Chase et al. (2018) (g cm**-3)
+                if p3_object:
+                    VZw = self.calc_VZ(p3_object, mass_particle, binZ_w)
+                    VZka = self.calc_VZ(p3_object, mass_particle, binZ_ka)
+                    VZku = self.calc_VZ(p3_object, mass_particle, binZ_ku)
+                    VZx = self.calc_VZ(p3_object, mass_particle, binZ_x)
                 
                 # optionally compute gamma fit params for each observation
                 if calc_gamma_params:
@@ -3948,6 +4268,38 @@ class Psd(Instrument):
                     description='Effective density [Leinonen and Szyrmer (2015) m-D relationships]',
                     units = 'g cm-3')
             ).where(np.sum(dbz_error, axis=0) > 0.)
+            VZ_w = xr.DataArray(
+                data = VZw,
+                dims = 'time',
+                coords = dict(time=self.data.time),
+                attrs = dict(
+                    description='W-band reflectivity-weighted fall speed',
+                    units = 'm s-1')
+            ).where(np.sum(dbz_error, axis=0) > 0.)
+            VZ_ka = xr.DataArray(
+                data = VZka,
+                dims = 'time',
+                coords = dict(time=self.data.time),
+                attrs = dict(
+                    description='Ka-band reflectivity-weighted fall speed',
+                    units = 'm s-1')
+            ).where(np.sum(dbz_error, axis=0) > 0.)
+            VZ_ku = xr.DataArray(
+                data = VZku,
+                dims = 'time',
+                coords = dict(time=self.data.time),
+                attrs = dict(
+                    description='Ku-band reflectivity-weighted fall speed',
+                    units = 'm s-1')
+            ).where(np.sum(dbz_error, axis=0) > 0.)
+            VZ_x = xr.DataArray(
+                data = VZx,
+                dims = 'time',
+                coords = dict(time=self.data.time),
+                attrs = dict(
+                    description='X-band reflectivity-weighted fall speed',
+                    units = 'm s-1')
+            ).where(np.sum(dbz_error, axis=0) > 0.)
             data_vars = {
                 'dbz_w_psd': dbz_w, 'dbz_ka_psd': dbz_ka, 'dbz_ku_psd': dbz_ku, 'dbz_x_psd': dbz_x, 
                 'n': n,
@@ -3966,7 +4318,8 @@ class Psd(Instrument):
                 'area_ratio_mean_n': ar_nw, 'area_ratio_mean_bf': ar_bf, 'area_ratio_mean_hy': ar_hy,
                 'area_ratio_mean_ch': ar_ch, 'area_ratio_mean_ls': ar_ls,
                 'aspect_ratio_mean_n': asr_nw, 'aspect_ratio_mean_bf': asr_bf, 'aspect_ratio_mean_hy': asr_hy,
-                'aspect_ratio_mean_ch': asr_ch, 'aspect_ratio_mean_ls': asr_ls
+                'aspect_ratio_mean_ch': asr_ch, 'aspect_ratio_mean_ls': asr_ls,
+                'VZ_w': VZ_w, 'VZ_ka': VZ_ka, 'VZ_ku': VZ_ku, 'VZ_x': VZ_x
             }
         else:
             data_vars = {
@@ -3986,6 +4339,13 @@ class Psd(Instrument):
                 'aspect_ratio_mean_n': asr_nw, 'aspect_ratio_mean_bf': asr_bf,
                 'aspect_ratio_mean_hy': asr_hy, 'aspect_ratio_mean_ch': asr_ch
             }
+        if compute_ch and p3_object: # add dbZ, VZ from Chase et al. simulations
+        	data_vars['dbz_w_ch'] = dbz_w_ch
+        	data_vars['dbz_ka_ch'] = dbz_ka_ch
+        	data_vars['dbz_ku_ch'] = dbz_ku_ch
+        	data_vars['VZ_w_ch'] = VZ_w_ch
+        	data_vars['VZ_ka_ch'] = VZ_ka_ch
+        	data_vars['VZ_ku_ch'] = VZ_ku_ch
         
         # put bulk properties together into an XArray DataSet
         ds = xr.Dataset(
@@ -4020,6 +4380,42 @@ class Psd(Instrument):
         
         return ds_merged
     
+    def calc_VZ(self, p3_object, mass_array, Z_array):
+        '''
+        Compute the reflectivity-weighted fall speed for a given
+        PSD and m-D relationship.
+        Inputs:
+            p3_object: P3() object with temperature, pressure info
+            mass_array: particle mass for each size bin [g]
+            Z_array: linear reflectivity for each size bin [mm**6 m**-3]
+        '''
+        # NOTE: Dmax and M in SI units, need to scale appropriately
+        T_K = p3_object.data.temp + 273.15 # degC to K
+        p_Pa = 100. * p3_object.data.pres_static # hPa to Pa
+        rho_a = p_Pa / (287.15 * T_K)
+        eta = 18.27 * (291.15 + 120.) / (T_K + 120.) * (
+            T_K / 291.15
+        )**1.5 / 1e6  # Sutherland's formula for dynamic viscosity
+        nu = eta / rho_a # kinetic viscosity
+        
+        # modified Best number
+        Ar = xr.where(
+            self.data.area_ratio > 0., self.data.area_ratio, 0.6
+        ) # set 0, nan to 0.6
+        X = rho_a / eta**2 * 8 * (mass_array / 1000.) * 9.81 / (
+            np.pi * np.sqrt(Ar))
+
+        # Reynolds number
+        Re = 16. * (np.sqrt(1 + 4. * np.sqrt(X) / 64. / np.sqrt(0.35)) - 1.)**2
+
+        # individual particle fall speed for each size bin
+        V = nu / (self.data.bin_center / 1000.) * Re
+        
+        # Z-weighted fall speed
+        VZ = (V * Z_array).sum(dim='size') / Z_array.sum(dim='size')
+        
+        return VZ
+    
     def calc_chisquare(
             self, x, n, iwc, z, a, b, rime_ind=None, exponential=False):
         '''
@@ -4052,7 +4448,7 @@ class Psd(Instrument):
             mass_particle* ND_fit * dD
         ) # IWC from fit PSD (g m**-3)
         if rime_ind is not None:
-            Z_fit = forward_Z() #initialize class
+            Z_fit = forward.forward_Z() #initialize class
             Z_fit.set_PSD(PSD=ND_fit[np.newaxis,:]*10.**8, D=Dmax/100., dD=dD/100., Z_interp=True) # get the PSD in the format to use in the routine (mks units)
             Z_fit.load_split_L15() # Load the leinonen output
             Z_fit.fit_sigmas(Z_interp=True) # Fit the backscatter cross-sections

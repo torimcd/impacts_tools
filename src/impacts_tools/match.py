@@ -407,6 +407,39 @@ class Match(ABC):
                     lat = lat, lon = lon),
                 attrs = lidar_dataset['pbsc_355'].attrs
             )
+            cr1 = xr.DataArray(
+                data =  pbsc1064.values / pbsc532.values,
+                dims = 'gate_idx',
+                coords = dict(
+                    time = time_flat, height = hght, distance = dist,
+                    lat = lat, lon = lon),
+                attrs = dict(
+                	description = 'Color ratio between 1064 and 532 nm',
+                	units = '#'
+                )
+            )
+            cr2 = xr.DataArray(
+                data =  pbsc1064.values / pbsc355.values,
+                dims = 'gate_idx',
+                coords = dict(
+                    time = time_flat, height = hght, distance = dist,
+                    lat = lat, lon = lon),
+                attrs = dict(
+                	description = 'Color ratio between 1064 and 355 nm',
+                	units = '#'
+                )
+            )
+            cr3 = xr.DataArray(
+                data =  pbsc532.values / pbsc355.values,
+                dims = 'gate_idx',
+                coords = dict(
+                    time = time_flat, height = hght, distance = dist,
+                    lat = lat, lon = lon),
+                attrs = dict(
+                	description = 'Color ratio between 532 and 355 nm',
+                	units = '#'
+                )
+            )
             dpol1064 = xr.DataArray(
                 data =  (
                     xr.DataArray(np.ones(lidar_dataset.dims['gate']), dims=('gate')) *
@@ -449,6 +482,7 @@ class Match(ABC):
             )
             data_vars = {
                 'pbsc_1064': pbsc1064, 'pbsc_532': pbsc532, 'pbsc_355': pbsc355,
+                'cr_1064_532': cr1, 'cr_1064_355': cr2, 'cr_532_355': cr3,
                 'dpol_1064': dpol1064, 'ext_1064': ext1064, 'ext_532': ext532,
                 'ext_355': ext355
             }
@@ -530,6 +564,17 @@ class Match(ABC):
                     ),
                     units = '#'
             )
+            for wavelength_pair in ['1064_532', '1064_355', '532_355']:
+            	match_dict[f'cr_{wavelength_pair}'] = dict(
+                    data = np.ma.masked_where(
+                        prind1d == 0, lidar_qc[f'cr_{wavelength_pair}'].values[prind1d]
+                    ),
+                    description = (
+                        f'Mean color ratio between {wavelength_pair.replace("_", " and ")} '
+                        'nm among matched lidar gates'
+                    ),
+                    units = '#'
+                )
             for wavelength in [1064, 532, 355]:
                 match_dict[f'ext_{wavelength}'] = dict(
                     data = np.ma.masked_where(
@@ -590,7 +635,8 @@ class Match(ABC):
                     '''
             elif self.name == 'Matched CPL Profiles': # L2 profile data
                 for var in [
-                        'pbsc_1064', 'pbsc_532', 'pbsc_355', 'dpol_1064',
+                        'pbsc_1064', 'pbsc_532', 'pbsc_355', 'cr_1064_532',
+                        'cr_1064_355', 'cr_532_355', 'dpol_1064',
                         'ext_1064', 'ext_532', 'ext_355']:
                     W_d_k2 = np.ma.masked_where(
                         np.ma.getmask(match_dict[var]['data']),
@@ -740,7 +786,8 @@ class Match(ABC):
                 )
         elif self.name == 'Matched CPL Profiles':
             for var in [
-                    'pbsc_1064', 'pbsc_532', 'pbsc_355', 'dpol_1064',
+                    'pbsc_1064', 'pbsc_532', 'pbsc_355', 'cr_1064_532',
+                    'cr_1064_355', 'cr_532_355', 'dpol_1064',
                     'ext_1064', 'ext_532', 'ext_355']:
                 data_vars[var] = xr.DataArray(
                     data = np.ma.masked_where(mask_final, match_dict[var]['data']),
